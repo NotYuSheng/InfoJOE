@@ -3,7 +3,7 @@ import requests
 
 BACKEND_URL = "http://query-agent-backend:8000"
 
-st.title("🧠 SQL Generator Chatbot")
+st.title("🧠 Query Agent")
 
 # Get tables from backend
 try:

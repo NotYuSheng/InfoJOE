@@ -10,6 +10,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import pairwise_distances
 import numpy as np
 import re
+from typing import List, Dict
 
 app = FastAPI()
 
@@ -199,3 +200,79 @@ def run_sql(request: RunSQLRequest):
         return {"columns": columns, "rows": rows}
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=400)
+
+@app.post("/generate-sample-questions")
+def generate_sample_questions(req: GenerateSQLRequest):
+    dict_lines = [f"- {col['Column']}: {col['Description']}" for col in req.data_dictionary]
+    dict_section = "\n".join(dict_lines)
+
+    df_sample = pd.DataFrame(req.sample_data)
+    if not df_sample.empty:
+        diverse_sample = get_diverse_sample(df_sample, n=10)
+        sample_lines = [str(row) for _, row in diverse_sample.iterrows()]
+        sample_section = "\n".join(sample_lines)
+    else:
+        sample_section = "(No sample data provided)"
+
+    prompt = f"""
+    You are a helpful assistant that suggests example questions users might ask about the `{req.table_name}` table.
+
+    ### Data Dictionary:
+    {dict_section}
+
+    ### Sample Data:
+    {sample_section}
+
+    Generate 3 example natural language questions that could be answered using a SQL SELECT query on the `{req.table_name}` table.
+    Do not include any explanations—only the questions, each as a separate bullet point.
+    """
+
+    response = requests.post(LLM_URL, headers={"Content-Type": "application/json"}, json={
+        "model": "qwen2.5-7b-instruct-1m",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant that suggests natural language queries for SQL generation."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.3
+    })
+    response.raise_for_status()
+
+    raw_text = response.json()["choices"][0]["message"]["content"]
+    questions = [q.strip("•- ").strip() for q in raw_text.strip().splitlines() if q.strip()]
+    return {"questions": questions}
+
+class DescribeResultsRequest(BaseModel):
+    sql: str
+    rows: List[Dict]
+
+@app.post("/describe-results")
+def describe_results(req: DescribeResultsRequest):
+    df = pd.DataFrame(req.rows)
+    sample_lines = df.head(10).to_string(index=False)
+
+    prompt = f"""
+    You are a data analyst assistant.
+
+    Given the following SQL query and sample results from that query, provide a short natural language summary of what the query result is showing. Do not explain SQL — just describe the result as if speaking to a non-technical user.
+
+    ### SQL Query:
+    {req.sql}
+
+    ### Sample Results (top 10 rows):
+    {sample_lines}
+
+    Summarize the data shown above in 1–2 sentences.
+    """
+
+    response = requests.post(LLM_URL, headers={"Content-Type": "application/json"}, json={
+        "model": "qwen2.5-7b-instruct-1m",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant who explains SQL query results to business users."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.3
+    })
+    response.raise_for_status()
+
+    summary = response.json()["choices"][0]["message"]["content"].strip()
+    return {"summary": summary}

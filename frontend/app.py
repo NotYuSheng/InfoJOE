@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
+import io
 
 BACKEND_URL = "http://query-agent-backend:8000"
 
@@ -93,24 +94,52 @@ if selected_table:
 # Question and SQL generation
 if selected_table:
     st.markdown(f"**Selected Table:** `{selected_table}`")
-    question = st.text_area("What do you want to know?", height=100)
 
+    # Generate sample questions once per table selection
+    question_key = f"sample_questions_{selected_table}"
+
+    if question_key not in st.session_state:
+        try:
+            payload = {
+                "table_name": selected_table,
+                "question": "",
+                "data_dictionary": edited_dict.to_dict(orient="records"),
+                "sample_data": sample_data
+            }
+            res = requests.post(f"{BACKEND_URL}/generate-sample-questions", json=payload)
+            if res.ok:
+                all_questions = res.json()["questions"]
+                st.session_state[question_key] = all_questions
+            else:
+                st.session_state[question_key] = []
+        except Exception as e:
+            st.session_state[question_key] = []
+
+    # Show example questions if available
+    example_qs = st.session_state.get(question_key, [])
+    if example_qs:
+        st.markdown("**💡 Example Questions:**")
+        cols = st.columns(len(example_qs))
+        for i, q in enumerate(example_qs):
+            if cols[i].button(q, key=f"q_btn_{i}"):
+                st.session_state["question_input"] = q
+                st.rerun()
+
+    # Question input field
+    question = st.text_area("What do you want to know?", height=100, key="question_input")
+
+    # Generate SQL button
     if st.button("Generate SQL"):
-        # Send: table name, question, data dictionary, sample data
-        question = st.session_state.get("question", question)
-
         payload = {
             "table_name": selected_table,
             "question": question,
             "data_dictionary": edited_dict.to_dict(orient="records"),
-            "sample_data": sample_data  # already loaded above
+            "sample_data": sample_data
         }
 
         res = requests.post(f"{BACKEND_URL}/generate-sql", json=payload)
-
         if res.ok:
-            sql = res.json()["sql"]
-            st.session_state["generated_sql"] = sql
+            st.session_state["generated_sql"] = res.json()["sql"]
         else:
             st.error("Something went wrong!")
 
@@ -214,9 +243,8 @@ if "generated_sql" in st.session_state:
 
                 if run_res.ok:
                     result = run_res.json()
-                    st.subheader("📊 Query Results")
                     df_result = pd.DataFrame(result["rows"], columns=result["columns"])
-                    st.dataframe(df_result)
+                    st.session_state["query_result_df"] = df_result
                 else:
                     st.error(f"Execution failed: {run_res.json().get('error', 'Unknown error')}")
 
@@ -225,8 +253,31 @@ if "generated_sql" in st.session_state:
 
         if run_res.ok:
             result = run_res.json()
-            st.subheader("📊 Query Results (Generated SQL)")
             df_result = pd.DataFrame(result["rows"], columns=result["columns"])
-            st.dataframe(df_result)
+            st.session_state["query_result_df"] = df_result
         else:
             st.error(f"Execution failed: {run_res.json().get('error', 'Unknown error')}")
+
+# After query result is shown
+if "query_result_df" in st.session_state:
+    df_result = st.session_state["query_result_df"]
+
+    # show the table
+    st.subheader("📊 Query Results")
+    st.dataframe(df_result)
+
+    # generate the summary
+    try:
+        summary_res = requests.post(f"{BACKEND_URL}/describe-results", json={
+            "sql": st.session_state["generated_sql"],  # or modified_sql
+            "rows": df_result.head(10).to_dict(orient="records")
+        })
+
+        if summary_res.ok:
+            st.markdown("#### 🧠 Summary of Results")
+            st.success(summary_res.json()["summary"])
+        else:
+            st.warning("Could not generate summary of results.")
+    except Exception as e:
+        st.warning(f"Error summarizing results: {e}")
+

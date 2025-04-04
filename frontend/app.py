@@ -262,11 +262,11 @@ if "generated_sql" in st.session_state:
 if "query_result_df" in st.session_state:
     df_result = st.session_state["query_result_df"]
 
-    # show the table
+    # Show the table
     st.subheader("📊 Query Results")
     st.dataframe(df_result)
 
-    # generate the summary
+    # Generate the summary
     try:
         summary_res = requests.post(f"{BACKEND_URL}/describe-results", json={
             "sql": st.session_state["generated_sql"],  # or modified_sql
@@ -281,3 +281,37 @@ if "query_result_df" in st.session_state:
     except Exception as e:
         st.warning(f"Error summarizing results: {e}")
 
+    # Generate Chart
+    try:
+        chart_res = requests.post(f"{BACKEND_URL}/suggest-chart", json={
+            "sql": st.session_state["generated_sql"],
+            "rows": df_result.head(10).to_dict(orient="records")
+        })
+
+        if chart_res.ok:
+            chart_info = chart_res.json()
+            chart_type = chart_info["chart_type"]
+            x = chart_info["x_axis"]
+            y = chart_info["y_axis"]
+
+            st.markdown("#### 📊 Suggested Chart")
+
+            if not chart_type or chart_type == "none":
+                st.info("ℹ️ No chart was recommended based on the query result. The data may not be suitable for visualization.")
+            elif x not in df_result.columns or y not in df_result.columns:
+                st.warning(f"⚠️ Suggested columns `{x}` or `{y}` not found in the query result.")
+            else:
+                st.write(f"**Type:** {chart_type.title()}  \n**X-axis:** `{x}`  \n**Y-axis:** `{y}`")
+
+                if chart_type == "bar":
+                    st.bar_chart(df_result.set_index(x)[y])
+                elif chart_type == "line":
+                    st.line_chart(df_result.set_index(x)[y])
+                elif chart_type == "scatter":
+                    st.scatter_chart(df_result[[x, y]])
+                else:
+                    st.warning(f"⚠️ Chart type `{chart_type}` is not supported for rendering.")
+        else:
+            st.warning("⚠️ Chart suggestion failed.")
+    except Exception as e:
+        st.warning(f"⚠️ Chart suggestion error: {e}")

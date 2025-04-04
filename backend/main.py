@@ -276,3 +276,63 @@ def describe_results(req: DescribeResultsRequest):
 
     summary = response.json()["choices"][0]["message"]["content"].strip()
     return {"summary": summary}
+
+@app.post("/suggest-chart")
+def suggest_chart(req: DescribeResultsRequest):
+    df = pd.DataFrame(req.rows)
+    sample_lines = df.head(10).to_string(index=False)
+
+    prompt = f"""
+    You are a data visualization assistant.
+
+    Given the following SQL query and sample result data, decide whether a chart is useful.
+
+    If a chart makes sense, suggest:
+    - A chart type (bar, line, pie, scatter, etc)
+    - A column for the X-axis
+    - A column for the Y-axis
+
+    If a chart does **not** make sense (e.g., text-heavy, too few rows, non-numeric data), say:
+    Chart Type: None
+
+    ### SQL Query:
+    {req.sql}
+
+    ### Sample Results (top 10 rows):
+    {sample_lines}
+
+    Respond in this exact format:
+    Chart Type: <bar, line, pie, scatter, none>
+    X-Axis: <column name or 'None'>
+    Y-Axis: <column name or 'None'>
+    """
+
+    response = requests.post(LLM_URL, headers={"Content-Type": "application/json"}, json={
+        "model": "qwen2.5-7b-instruct-1m",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant for visualizing SQL result data."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.3
+    })
+    response.raise_for_status()
+
+    content = response.json()["choices"][0]["message"]["content"]
+
+    # Parse response into parts
+    lines = content.strip().splitlines()
+    chart_type = next((line.split(":")[1].strip() for line in lines if line.lower().startswith("chart type")), None)
+    x_axis = next((line.split(":")[1].strip() for line in lines if line.lower().startswith("x-axis")), None)
+    y_axis = next((line.split(":")[1].strip() for line in lines if line.lower().startswith("y-axis")), None)
+
+    # Normalize "none" axis values to None
+    if x_axis and x_axis.lower() == "none":
+        x_axis = None
+    if y_axis and y_axis.lower() == "none":
+        y_axis = None
+
+    return {
+        "chart_type": chart_type,
+        "x_axis": x_axis,
+        "y_axis": y_axis
+    }

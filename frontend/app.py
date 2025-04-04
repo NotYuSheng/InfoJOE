@@ -148,7 +148,7 @@ if "generated_sql" in st.session_state:
     st.subheader("Generated SQL:")
     st.code(sql, language="sql")
     
-    # Optional: Refresh dictionary button
+    # Refresh dictionary button
     with st.expander("🔧 Refine Your Query"):
         filters = {}
 
@@ -211,16 +211,28 @@ if "generated_sql" in st.session_state:
                 min_input = col1.number_input(
                     f"Min {column} ({description})",
                     key=min_key,
-                    disabled=not use_filter
+                    disabled=not use_filter,
+                    min_value=min_val,
+                    max_value=max_val,
+                    value=st.session_state[min_key]
                 )
                 max_input = col2.number_input(
                     f"Max {column} ({description})",
                     key=max_key,
-                    disabled=not use_filter
+                    disabled=not use_filter,
+                    min_value=min_val,
+                    max_value=max_val,
+                    value=st.session_state[max_key]
                 )
 
-                if use_filter and (min_input != min_val or max_input != max_val):
-                    filters[column] = f"{column} BETWEEN {int(min_input)} AND {int(max_input)}"
+                # Validation
+                if use_filter:
+                    if min_input > max_input:
+                        st.warning(f"⚠️ `{column}`: Minimum value cannot exceed maximum.")
+                    elif max_input < min_input:
+                        st.warning(f"⚠️ `{column}`: Maximum value cannot be less than minimum.")
+                    elif min_input != min_val or max_input != max_val:
+                        filters[column] = f"{column} BETWEEN {int(min_input)} AND {int(max_input)}"
 
         # Button to manually generate modified SQL
         if st.button("Refine Query"):
@@ -280,6 +292,22 @@ if "query_result_df" in st.session_state:
             st.warning("Could not generate summary of results.")
     except Exception as e:
         st.warning(f"Error summarizing results: {e}")
+
+    # Anomaly/Trend detection
+    try:
+        detect_res = requests.post(f"{BACKEND_URL}/detect-anomalies", json={
+            "sql": st.session_state["generated_sql"],
+            "rows": df_result.to_dict(orient="records")
+        })
+
+        if detect_res.ok:
+            anomalies = detect_res.json()["warnings"]
+            if anomalies:
+                st.markdown("#### ⚠️ Anomalies / Warnings")
+                for warning in anomalies:
+                    st.warning(warning)
+    except Exception as e:
+        st.warning(f"Anomaly check failed: {e}")
 
     # Generate Chart
     try:

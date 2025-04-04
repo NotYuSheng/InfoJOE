@@ -336,3 +336,31 @@ def suggest_chart(req: DescribeResultsRequest):
         "x_axis": x_axis,
         "y_axis": y_axis
     }
+
+@app.post("/detect-anomalies")
+def detect_anomalies(req: DescribeResultsRequest):
+    df = pd.DataFrame(req.rows)
+
+    if df.empty:
+        return {"warnings": ["Query returned no data. You may want to revise your filters or try a broader question."]}
+
+    warnings = []
+
+    # Too few rows
+    if len(df) < 5:
+        warnings.append(f"Query returned only {len(df)} rows — consider broadening your filter.")
+
+    # Check for dominant values
+    for col in df.columns:
+        top_freq = df[col].value_counts(normalize=True).max()
+        if top_freq >= 0.9:
+            dominant_val = df[col].value_counts().idxmax()
+            warnings.append(f"Column `{col}` is dominated by `{dominant_val}` ({int(top_freq * 100)}%).")
+
+    # Check if all values in a column are the same
+    for col in df.columns:
+        if df[col].nunique() == 1:
+            val = df[col].iloc[0]
+            warnings.append(f"All values in `{col}` are `{val}` — is this intentional?")
+
+    return {"warnings": warnings}

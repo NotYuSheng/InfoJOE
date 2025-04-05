@@ -178,8 +178,11 @@ if "generated_sql" in st.session_state:
                 if previous not in options and previous is not None:
                     options.insert(-1, previous)  # insert before "Other"
 
+                st.caption(f"{column} — {description}")
+
                 selected = st.selectbox(
-                    f"{column} ({description})", options,
+                    "Select value", 
+                    options,
                     key=dropdown_key,
                     disabled=not use_filter
                 )
@@ -196,33 +199,30 @@ if "generated_sql" in st.session_state:
                 elif use_filter and selected != "Any":
                     filters[column] = f"{column} = '{selected}'"
 
-            # Numeric filter (min/max)
-            elif all(isinstance(v, int) for v in unique_values):
+            # Numeric filter (int or float)
+            elif all(isinstance(v, (int, float)) for v in unique_values):
                 min_val, max_val = min(unique_values), max(unique_values)
                 min_key = f"{key}_min"
                 max_key = f"{key}_max"
 
-                if min_key not in st.session_state:
-                    st.session_state[min_key] = min_val
-                if max_key not in st.session_state:
-                    st.session_state[max_key] = max_val
+                st.session_state.setdefault(min_key, min_val)
+                st.session_state.setdefault(max_key, max_val)
 
+                st.caption(f"{column} — {description}")
                 col1, col2 = st.columns(2)
                 min_input = col1.number_input(
-                    f"Min {column} ({description})",
+                    "Min",
                     key=min_key,
                     disabled=not use_filter,
                     min_value=min_val,
-                    max_value=max_val,
-                    value=st.session_state[min_key]
+                    max_value=max_val
                 )
                 max_input = col2.number_input(
-                    f"Max {column} ({description})",
+                    "Max",
                     key=max_key,
                     disabled=not use_filter,
                     min_value=min_val,
-                    max_value=max_val,
-                    value=st.session_state[max_key]
+                    max_value=max_val
                 )
 
                 # Validation
@@ -232,7 +232,7 @@ if "generated_sql" in st.session_state:
                     elif max_input < min_input:
                         st.warning(f"⚠️ `{column}`: Maximum value cannot be less than minimum.")
                     elif min_input != min_val or max_input != max_val:
-                        filters[column] = f"{column} BETWEEN {int(min_input)} AND {int(max_input)}"
+                        filters[column] = f"{column} BETWEEN {min_input} AND {max_input}"
 
         # Button to manually generate modified SQL
         if st.button("Refine Query"):
@@ -301,11 +301,12 @@ if "query_result_df" in st.session_state:
         })
 
         if detect_res.ok:
-            anomalies = detect_res.json()["warnings"]
+            anomalies = detect_res.json().get("warnings", [])
             if anomalies:
                 st.markdown("#### ⚠️ Anomalies / Warnings")
-                for warning in anomalies:
-                    st.warning(warning)
+                with st.expander("View Anomaly Log", expanded=True):
+                    log = "\n".join(f"- {w}" for w in anomalies)
+                    st.code(log, language="markdown")
     except Exception as e:
         st.warning(f"Anomaly check failed: {e}")
 
@@ -331,14 +332,18 @@ if "query_result_df" in st.session_state:
             else:
                 st.write(f"**Type:** {chart_type.title()}  \n**X-axis:** `{x}`  \n**Y-axis:** `{y}`")
 
-                if chart_type == "bar":
+                chart_type = chart_info.get("chart_type", "").strip().lower()
+                if chart_type == "bar_chart":
                     st.bar_chart(df_result.set_index(x)[y])
-                elif chart_type == "line":
+                elif chart_type == "line_chart":
                     st.line_chart(df_result.set_index(x)[y])
-                elif chart_type == "scatter":
+                elif chart_type == "area_chart":
+                    st.area_chart(df_result.set_index(x)[y])
+                elif chart_type == "scatter_chart":
                     st.scatter_chart(df_result[[x, y]])
                 else:
                     st.warning(f"⚠️ Chart type `{chart_type}` is not supported for rendering.")
+
         else:
             st.warning("⚠️ Chart suggestion failed.")
     except Exception as e:

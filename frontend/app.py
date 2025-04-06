@@ -72,35 +72,48 @@ if data_source == "PostgreSQL Database":
 
 # --- File upload selection ---
 elif data_source == "Upload File":
-    selected_table = None
+    selected_table = st.session_state.get("selected_table")
     uploaded_file = st.file_uploader("Upload a CSV or Excel file", type=["csv", "xlsx"])
 
     if uploaded_file is not None:
-        try:
-            if uploaded_file.name.endswith(".csv"):
-                user_df = pd.read_csv(uploaded_file)
-            else:
-                user_df = pd.read_excel(uploaded_file)
+        filename = uploaded_file.name
 
-            # Sanitize rows before LLM call
-            sample_rows = make_json_safe(user_df.head(3).to_dict(orient="records"))
+        # Check if new file has been uploaded
+        if filename != st.session_state.get("uploaded_filename"):
+            try:
+                # Parse file
+                if filename.endswith(".csv"):
+                    user_df = pd.read_csv(uploaded_file)
+                else:
+                    user_df = pd.read_excel(uploaded_file)
 
-            # Auto-suggest table name via LLM
-            response = requests.post(f"{BACKEND_URL}/suggest-table-name", json={
-                "columns": list(user_df.columns),
-                "sample_rows": sample_rows
-            })
+                # Store file and dataframe in session
+                st.session_state["uploaded_filename"] = filename
+                st.session_state["uploaded_df"] = user_df
 
-            if response.ok:
-                suggested_name = response.json()["suggested_name"]
-                st.session_state["selected_table"] = suggested_name
-                selected_table = suggested_name
-                st.info(f"🤖 Suggested Table Name: `{suggested_name}`")
-            else:
-                st.warning("⚠️ Could not suggest table name.")
+                # Prepare data for LLM
+                sample_rows = make_json_safe(user_df.head(3).to_dict(orient="records"))
 
-        except Exception as e:
-            st.error(f"Failed to load file: {e}")
+                # Auto-suggest table name via LLM
+                response = requests.post(f"{BACKEND_URL}/suggest-table-name", json={
+                    "columns": list(user_df.columns),
+                    "sample_rows": sample_rows
+                })
+
+                if response.ok:
+                    suggested_name = response.json()["suggested_name"]
+                    st.session_state["selected_table"] = suggested_name
+                    selected_table = suggested_name
+                    st.info(f"🤖 Suggested Table Name: `{suggested_name}`")
+                else:
+                    st.warning("⚠️ Could not suggest table name.")
+            except Exception as e:
+                st.error(f"Failed to load file: {e}")
+        else:
+            # Load cached version on rerun
+            user_df = st.session_state.get("uploaded_df")
+            selected_table = st.session_state.get("selected_table")
+
 
 # --- Data Dictionary and Sample Data ---
 if selected_table:
@@ -170,8 +183,8 @@ if selected_table:
     # Data Dictionary
     # -----------------------
     if dict_key not in st.session_state:
-        if selected_table:
-            dict_res = requests.post(f"{BACKEND_URL}/data-dictionary", json={
+        if data_source == "PostgreSQL Database":
+            dict_res = requests.post(f"{BACKEND_URL}/data-dictionary-postgres", json={
                 "table_name": selected_table
             })
             if dict_res.ok:
@@ -179,12 +192,25 @@ if selected_table:
             else:
                 st.warning("Could not generate data dictionary.")
                 st.stop()
-        else:
-            st.session_state[dict_key] = [
-                {"Column": col, "Description": f"A column named {col}"} for col in user_df.columns
-            ]
+        elif data_source == "Upload File":
+            try:
+                dict_res = requests.post(f"{BACKEND_URL}/data-dictionary-upload", json={
+                    "table_name": selected_table,
+                    "sample_data": make_json_safe(st.session_state[sample_key])
+                })
+                if dict_res.ok:
+                    st.session_state[dict_key] = dict_res.json()["dictionary"]
 
-    st.subheader("📘 Data Dictionary" if selected_table else "📘 Data Dictionary (Generated from Upload)")
+                    st.json(dict_res.json())
+
+                else:
+                    st.warning("Could not generate data dictionary from file upload.")
+                    st.stop()
+            except Exception as e:
+                st.error(f"Error generating dictionary from uploaded file: {e}")
+                st.stop()
+
+    st.subheader("📘 Data Dictionary")
     st.caption("Descriptions are generated using an LLM based on your table schema. You can modify them to guide query generation more precisely.")
     dictionary = st.session_state[dict_key]
 
@@ -202,24 +228,15 @@ if selected_table:
         st.rerun()
 
 # Question and SQL generation
-if selected_table or user_df is not None:
-    # Determine source table name for display / LLM prompts
-    if selected_table:
-        table_name_display = selected_table
-    elif uploaded_file is not None:
-        table_name_display = os.path.splitext(uploaded_file.name)[0]
-
-    question_key = f"sample_questions_{table_name_display}"
+if selected_table:
+    question_key = f"sample_questions_{selected_table}"
 
     sample_data = clean_sample_data(sample_data)
-
-    # st.write("🔍 sample_data type:", type(sample_data))
-    # st.write("🔍 First 2 rows of sample_data:", sample_data[:2])
 
     if question_key not in st.session_state:
         try:
             payload = {
-                "table_name": table_name_display,
+                "table_name": selected_table,
                 "question": "",
                 "data_dictionary": edited_dict.to_dict(orient="records"),
                 "sample_data": sample_data
@@ -229,7 +246,6 @@ if selected_table or user_df is not None:
             if res.ok:
                 all_questions = res.json()["questions"]
                 st.session_state[question_key] = all_questions
-                st.write("✅ Sample questions generated")
             else:
                 st.warning("Failed to get sample questions from backend.")
                 st.session_state[question_key] = []
@@ -253,7 +269,7 @@ if selected_table or user_df is not None:
     # Generate SQL button
     if st.button("Generate SQL"):
         payload = {
-            "table_name": table_name_display,
+            "table_name": selected_table,
             "question": question,
             "data_dictionary": edited_dict.to_dict(orient="records"),
             "sample_data": sample_data
@@ -268,7 +284,7 @@ if selected_table or user_df is not None:
             st.error("Something went wrong!")
 
 # Show Generated SQL
-if "generated_sql" in st.session_state and (selected_table or user_df is not None):
+if "generated_sql" in st.session_state and selected_table:
     sql = st.session_state["generated_sql"]
     st.subheader("Generated SQL:")
     st.code(sql, language="sql")

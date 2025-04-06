@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from db import get_connection, get_table_schema, list_all_tables
-from prompt import generate_sql_query, generate_data_dictionary_prompt
+from prompt import create_data_dictionary_prompt, create_data_dictionary_prompt_from_sample_data
 import requests
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
@@ -129,13 +129,13 @@ def generate_sql(req: GenerateSQLRequest):
 
     return {"sql": sql_clean, "prompt": prompt}
 
-class DictionaryRequest(BaseModel):
+class PostgresDictionaryRequest(BaseModel):
     table_name: str
 
-@app.post("/data-dictionary")
-def get_data_dictionary(request: DictionaryRequest):
+@app.post("/data-dictionary-postgres")
+def generate_postgres_data_dictionary(request: PostgresDictionaryRequest):
     schema = get_table_schema(request.table_name)
-    prompt = generate_data_dictionary_prompt(request.table_name, schema)
+    prompt = create_data_dictionary_prompt(request.table_name, schema)
 
     response = requests.post(LLM_URL, headers={"Content-Type": "application/json"}, json={
         "model": "qwen2.5-7b-instruct-1m",
@@ -149,6 +149,44 @@ def get_data_dictionary(request: DictionaryRequest):
     result = response.json()["choices"][0]["message"]["content"]
     print("LLM Response:\n", result)  # <- Debugging line
 
+    entries = []
+    for line in result.strip().splitlines():
+        match = re.match(r"-\s*`?(\w+)`?\s*:\s*(.+)", line)
+        if match:
+            col, desc = match.groups()
+            entries.append({
+                "Column": col,
+                "Description": desc
+            })
+
+    return {"dictionary": entries}
+
+class UploadDictionaryRequest(BaseModel):
+    table_name: str
+    sample_data: list[dict]
+
+@app.post("/data-dictionary-upload")
+def generate_upload_data_dictionary(request: UploadDictionaryRequest):
+    # Create the prompt using the sample data
+    prompt = create_data_dictionary_prompt_from_sample_data(
+        request.table_name,
+        request.sample_data
+    )
+
+    # Send the request to the LLM
+    response = requests.post(LLM_URL, headers={"Content-Type": "application/json"}, json={
+        "model": "qwen2.5-7b-instruct-1m",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant that describes columns based on sample data."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.3
+    })
+
+    response.raise_for_status()
+    result = response.json()["choices"][0]["message"]["content"]
+
+    # Parse the result into column descriptions
     entries = []
     for line in result.strip().splitlines():
         match = re.match(r"-\s*`?(\w+)`?\s*:\s*(.+)", line)

@@ -2,64 +2,195 @@ import streamlit as st
 import requests
 import pandas as pd
 import io
+import os
+import math
+import sys
+import numpy as np
+import datetime
+import decimal
+
+# Add the folder containing functions.py to the Python path
+sys.path.append("/app/shared_utils")
+
+# Import directly from the file
+from functions import clean_sample_data, make_json_safe
 
 BACKEND_URL = "http://query-agent-backend:8000"
 
 st.set_page_config(page_title="Query Agent", layout="centered")
 st.title("🧠 Query Agent")
+st.caption("Ask questions in plain English and generate SQL queries using AI. Upload your data or connect to a database to get started.")
 
-# Get tables from backend
-try:
-    tables_response = requests.get(f"{BACKEND_URL}/tables")
-    tables = tables_response.json() if tables_response.ok else []
-except Exception as e:
-    st.error(f"Failed to connect to backend: {e}")
-    tables = []
-
-if not tables:
-    st.warning("⚠️ No tables found in the database. Please add some tables and data to the PostgreSQL database.")
-    st.stop()
-
-# Table selection
+data_source = st.radio(
+    "Choose your data source:", ["PostgreSQL Database", "Upload File"], horizontal=True
+)
+uploaded_file = None
+user_df = None
 selected_table = None
-st.subheader("Select a Table:")
-cols = st.columns(3)
 
-for i, table in enumerate(tables):
-    if cols[i % 3].button(table):
-        selected_table = table
-        st.session_state["selected_table"] = table
-        # Clear cached dictionary if switching tables
-        st.session_state.pop(f"data_dict_{table}", None)
+# Initialize tracker
+if "prev_data_source" not in st.session_state:
+    st.session_state.prev_data_source = data_source
 
-# Use previously selected table if exists
-selected_table = st.session_state.get("selected_table", selected_table)
+# Detect a true change
+if st.session_state.prev_data_source != data_source:
+    # Clear session variables safely
+    for key in ["generated_sql", "query_result_df", "modified_sql", "filters", "question_input"]:
+        st.session_state.pop(key, None)
 
+    # Also clear selected_table and uploaded file refs
+    st.session_state.pop("selected_table", None)
+
+    # Update the tracker
+    st.session_state.prev_data_source = data_source
+
+    # Reset selected table if data source changes
+    selected_table = None
+
+# --- PostgreSQL selection ---
+if data_source == "PostgreSQL Database":
+    try:
+        tables_response = requests.get(f"{BACKEND_URL}/tables")
+        tables = tables_response.json() if tables_response.ok else []
+    except Exception as e:
+        st.error(f"Failed to connect to backend: {e}")
+        tables = []
+
+    if not tables:
+        st.warning("⚠️ No tables found in the database. Please add some tables and data to the PostgreSQL database.")
+        st.stop()
+
+    st.subheader("📋 Select a Table:")
+    cols = st.columns(3)
+    for i, table in enumerate(tables):
+        if cols[i % 3].button(table):
+            selected_table = table
+            st.session_state["selected_table"] = table
+            st.session_state.pop(f"data_dict_{table}", None)
+
+    selected_table = st.session_state.get("selected_table", selected_table)
+
+# --- File upload selection ---
+elif data_source == "Upload File":
+    selected_table = None
+    uploaded_file = st.file_uploader("Upload a CSV or Excel file", type=["csv", "xlsx"])
+
+    if uploaded_file is not None:
+        try:
+            if uploaded_file.name.endswith(".csv"):
+                user_df = pd.read_csv(uploaded_file)
+            else:
+                user_df = pd.read_excel(uploaded_file)
+
+            # Sanitize rows before LLM call
+            sample_rows = make_json_safe(user_df.head(3).to_dict(orient="records"))
+
+            # Auto-suggest table name via LLM
+            response = requests.post(f"{BACKEND_URL}/suggest-table-name", json={
+                "columns": list(user_df.columns),
+                "sample_rows": sample_rows
+            })
+
+            if response.ok:
+                suggested_name = response.json()["suggested_name"]
+                st.session_state["selected_table"] = suggested_name
+                selected_table = suggested_name
+                st.info(f"🤖 Suggested Table Name: `{suggested_name}`")
+            else:
+                st.warning("⚠️ Could not suggest table name.")
+
+        except Exception as e:
+            st.error(f"Failed to load file: {e}")
+
+# --- Data Dictionary and Sample Data ---
 if selected_table:
     st.markdown(f"**Selected Table:** `{selected_table}`")
 
-    # Data dictionary key
-    dict_key = f"data_dict_{selected_table}"
+    # Cache keys
+    dict_key = f"data_dict_{selected_table}" if selected_table else "data_dict_uploaded"
+    sample_key = f"sample_data_{selected_table}" if selected_table else "sample_data_uploaded"
 
-    # Fetch and cache data dictionary only once
+    # -----------------------
+    # Sample Data
+    # -----------------------
+    if sample_key not in st.session_state:
+        if data_source == "PostgreSQL Database":
+            sample_data_res = requests.get(f"{BACKEND_URL}/sample-data/{selected_table}")
+            if sample_data_res.ok:
+                st.session_state[sample_key] = sample_data_res.json()
+            else:
+                st.warning("Could not retrieve sample data.")
+                st.stop()
+        elif data_source == "Upload File":
+            # Send cleaned sample to backend to get diverse rows
+            try:
+                sample_rows = make_json_safe(user_df.head(500).to_dict(orient="records"))  # larger pool for diversity
+
+                payload = {
+                    "rows": sample_rows,
+                    "n": 10
+                }
+
+                diverse_res = requests.post(f"{BACKEND_URL}/diverse-sample", json=payload)
+
+                if diverse_res.ok:
+                    st.session_state[sample_key] = diverse_res.json()["sample"]
+                else:
+                    st.warning("⚠️ Could not generate diverse sample. Using first 10 rows instead.")
+                    st.session_state[sample_key] = user_df.head(10).to_dict(orient="records")
+
+            except Exception as e:
+                st.warning(f"⚠️ Failed to generate sample: {e}")
+                st.session_state[sample_key] = user_df.head(10).to_dict(orient="records")
+
+    # Display sample data
+    sample_data = st.session_state[sample_key]
+
+    if not sample_data:
+        st.info("ℹ️ This data source is currently empty.")
+    else:
+        st.subheader("🔍 Sample Data")
+        st.caption("These rows were selected to show diverse examples from your data. \
+                    They help the LLM understand a broader range of patterns for better query generation."
+                    )
+        df_sample = pd.DataFrame(sample_data)
+
+        edited_sample = st.data_editor(
+            df_sample,
+            use_container_width=True,
+            hide_index=True,
+            key="editable_sample"
+            #num_rows="dynamic"
+        )
+
+        # Update session with edited sample data
+        st.session_state[sample_key] = edited_sample.to_dict(orient="records")
+
+    # -----------------------
+    # Data Dictionary
+    # -----------------------
     if dict_key not in st.session_state:
-        dict_res = requests.post(f"{BACKEND_URL}/data-dictionary", json={
-            "table_name": selected_table
-        })
-
-        if dict_res.ok:
-            st.session_state[dict_key] = dict_res.json()["dictionary"]
+        if selected_table:
+            dict_res = requests.post(f"{BACKEND_URL}/data-dictionary", json={
+                "table_name": selected_table
+            })
+            if dict_res.ok:
+                st.session_state[dict_key] = dict_res.json()["dictionary"]
+            else:
+                st.warning("Could not generate data dictionary.")
+                st.stop()
         else:
-            st.warning("Could not generate data dictionary.")
-            st.stop()
+            st.session_state[dict_key] = [
+                {"Column": col, "Description": f"A column named {col}"} for col in user_df.columns
+            ]
 
-    # Show editable dictionary
-    st.subheader("📘 Data Dictionary (LLM-generated)")
+    st.subheader("📘 Data Dictionary" if selected_table else "📘 Data Dictionary (Generated from Upload)")
+    st.caption("Descriptions are generated using an LLM based on your table schema. You can modify them to guide query generation more precisely.")
     dictionary = st.session_state[dict_key]
 
-    df = pd.DataFrame(dictionary)
+    df_dict = pd.DataFrame(dictionary)
     edited_dict = st.data_editor(
-        df,
+        df_dict,
         use_container_width=True,
         hide_index=True,
         num_rows="fixed",
@@ -67,52 +198,43 @@ if selected_table:
     )
 
     if st.button("🔄 Refresh Data Dictionary"):
-        st.session_state.pop(dict_key, None)  # remove cached dictionary
-        st.rerun()  # triggers a full rerun
-
-    # Sample data preview
-    sample_key = f"sample_data_{selected_table}"
-
-    # Load sample data once per table
-    if sample_key not in st.session_state:
-        sample_data_res = requests.get(f"{BACKEND_URL}/sample-data/{selected_table}")
-        if sample_data_res.ok:
-            st.session_state[sample_key] = sample_data_res.json()
-        else:
-            st.warning("Could not retrieve sample data.")
-            st.stop()
-
-    sample_data = st.session_state[sample_key]
-
-    if not sample_data:
-        st.info("ℹ️ This table exists but currently has no data.")
-    else:
-        st.subheader("🔍 Sample Data (10 Diverse Rows)")
-        df = pd.DataFrame(sample_data)
-        st.dataframe(df, height=200)
+        st.session_state.pop(dict_key, None)
+        st.rerun()
 
 # Question and SQL generation
-if selected_table:
-    st.markdown(f"**Selected Table:** `{selected_table}`")
+if selected_table or user_df is not None:
+    # Determine source table name for display / LLM prompts
+    if selected_table:
+        table_name_display = selected_table
+    elif uploaded_file is not None:
+        table_name_display = os.path.splitext(uploaded_file.name)[0]
 
-    # Generate sample questions once per table selection
-    question_key = f"sample_questions_{selected_table}"
+    question_key = f"sample_questions_{table_name_display}"
+
+    sample_data = clean_sample_data(sample_data)
+
+    # st.write("🔍 sample_data type:", type(sample_data))
+    # st.write("🔍 First 2 rows of sample_data:", sample_data[:2])
 
     if question_key not in st.session_state:
         try:
             payload = {
-                "table_name": selected_table,
+                "table_name": table_name_display,
                 "question": "",
                 "data_dictionary": edited_dict.to_dict(orient="records"),
                 "sample_data": sample_data
             }
             res = requests.post(f"{BACKEND_URL}/generate-sample-questions", json=payload)
+
             if res.ok:
                 all_questions = res.json()["questions"]
                 st.session_state[question_key] = all_questions
+                st.write("✅ Sample questions generated")
             else:
+                st.warning("Failed to get sample questions from backend.")
                 st.session_state[question_key] = []
         except Exception as e:
+            st.warning(f"⚠️ Sample question generation failed: {e}")
             st.session_state[question_key] = []
 
     # Show example questions if available
@@ -131,11 +253,13 @@ if selected_table:
     # Generate SQL button
     if st.button("Generate SQL"):
         payload = {
-            "table_name": selected_table,
+            "table_name": table_name_display,
             "question": question,
             "data_dictionary": edited_dict.to_dict(orient="records"),
             "sample_data": sample_data
         }
+
+        #st.write("📦 Payload being sent:", payload)
 
         res = requests.post(f"{BACKEND_URL}/generate-sql", json=payload)
         if res.ok:
@@ -143,7 +267,8 @@ if selected_table:
         else:
             st.error("Something went wrong!")
 
-if "generated_sql" in st.session_state:
+# Show Generated SQL
+if "generated_sql" in st.session_state and (selected_table or user_df is not None):
     sql = st.session_state["generated_sql"]
     st.subheader("Generated SQL:")
     st.code(sql, language="sql")
@@ -271,7 +396,7 @@ if "generated_sql" in st.session_state:
             st.error(f"Execution failed: {run_res.json().get('error', 'Unknown error')}")
 
 # After query result is shown
-if "query_result_df" in st.session_state:
+if "query_result_df" in st.session_state and (selected_table or user_df is not None):
     df_result = st.session_state["query_result_df"]
 
     # Show the table

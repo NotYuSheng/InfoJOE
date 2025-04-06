@@ -25,6 +25,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
       POSTGRES_HOST: query-agent-db
+    volumes:
+      - ./shared_utils:/app/shared_utils
 
   query-agent-frontend:
     container_name: query-agent-frontend
@@ -34,3 +36,5 @@ services:
       - "7080:8501"
     depends_on:
       - query-agent-backend
+    volumes:
+      - ./shared_utils:/app/shared_utils

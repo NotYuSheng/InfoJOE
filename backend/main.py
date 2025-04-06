@@ -10,7 +10,17 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import pairwise_distances
 import numpy as np
 import re
+import sys
 from typing import List, Dict
+import math
+import datetime
+import decimal
+
+# Add the folder containing functions.py to the Python path
+sys.path.append("/app/shared_utils")
+
+# Import directly from the file
+from functions import clean_sample_data, make_json_safe
 
 app = FastAPI()
 
@@ -23,23 +33,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-LLM_URL = "http://192.168.1.147:1234/v1/chat/completions"
+LLM_URL = "http://192.168.1.16:1234/v1/chat/completions"
 
-def get_diverse_sample(df: pd.DataFrame, n=10):
+def get_diverse_sample(df: pd.DataFrame, n=10) -> pd.DataFrame:
     if len(df) <= n:
-        return df  # not enough rows to sample, return all
+        return df
 
+    # Clean and encode
     df_copy = df.copy()
-    df_copy.fillna("N/A", inplace=True)
 
+    # Step 1: Fill missing values safely
     for col in df_copy.columns:
         if df_copy[col].dtype == "object":
-            le = LabelEncoder()
-            df_copy[col] = le.fit_transform(df_copy[col].astype(str))
+            df_copy.loc[:, col] = df_copy[col].fillna("N/A")
+        else:
+            df_copy.loc[:, col] = df_copy[col].fillna(0)
+
+    # Step 2: Encode object columns using LabelEncoder
+    for col in df_copy.select_dtypes(include="object").columns:
+        le = LabelEncoder()
+        df_copy.loc[:, col] = le.fit_transform(df_copy[col].astype(str))
 
     distance_matrix = pairwise_distances(df_copy, metric='euclidean')
     selected_indices = [np.random.randint(len(df_copy))]
-
     for _ in range(n - 1):
         remaining = list(set(range(len(df_copy))) - set(selected_indices))
         if not remaining:
@@ -113,7 +129,6 @@ def generate_sql(req: GenerateSQLRequest):
 
     return {"sql": sql_clean, "prompt": prompt}
 
-
 class DictionaryRequest(BaseModel):
     table_name: str
 
@@ -162,11 +177,30 @@ def get_sample_data(table_name: str):
 
     df = pd.DataFrame(rows, columns=columns)
 
-    # Apply diverse sampling (10 rows)
     if len(df) > 10:
         df = get_diverse_sample(df, n=10)
 
-    return df.to_dict(orient="records")
+    # Convert and sanitize before returning
+    raw_dicts = df.to_dict(orient="records")
+    safe_dicts = clean_sample_data(raw_dicts)
+    
+    return safe_dicts
+
+class SampleRequest(BaseModel):
+    rows: list[dict]
+    n: int = 10
+
+@app.post("/diverse-sample")
+def get_diverse_sample_endpoint(req: SampleRequest):
+    df = pd.DataFrame(req.rows)
+
+    diverse_df = get_diverse_sample(df, n=req.n)
+
+    # Convert to JSON-safe structure
+    sample_rows = diverse_df.to_dict(orient="records")
+
+    # Clean it thoroughly (np.int64, datetime, etc.)
+    return {"sample": clean_sample_data(sample_rows)}
 
 class RunSQLRequest(BaseModel):
     sql: str
@@ -176,9 +210,11 @@ def run_sql(request: RunSQLRequest):
     sql = request.sql.strip().lower()
 
     FORBIDDEN = ["drop", "delete", "insert", "update", "alter", "truncate"]
-    if any(word in sql for word in FORBIDDEN):
+    forbidden_word = next((word for word in FORBIDDEN if word in sql.lower()), None)
+
+    if forbidden_word:
         return JSONResponse(
-            content={"error": "Query contains forbidden keywords."},
+            content={"error": f"Query contains forbidden keyword: '{forbidden_word}'"},
             status_code=403
         )
 
@@ -214,8 +250,25 @@ def generate_sample_questions(req: GenerateSQLRequest):
     else:
         sample_section = "(No sample data provided)"
 
+    # prompt = f"""
+    # You are a helpful assistant that suggests example questions users might ask about the {req.table_name} table.
+
+    # ### Data Dictionary:
+    # {dict_section}
+
+    # ### Sample Data:
+    # {sample_section}
+
+    # Generate 3 example natural language questions that could be answered using a SQL SELECT query on the {req.table_name} table.
+    # Do not include any explanations—only the questions, each as a separate bullet point.
+    # """
+
     prompt = f"""
-    You are a helpful assistant that suggests example questions users might ask about the `{req.table_name}` table.
+    You are a helpful assistant supporting analysts in counter-terrorism intelligence gathering.
+
+    Given the structure and sample data of the `{req.table_name}` table, generate example investigative questions that an analyst might ask to uncover patterns, threats, or anomalies from the data.
+
+    Questions should be practical, focused, and answerable using a SQL SELECT query.
 
     ### Data Dictionary:
     {dict_section}
@@ -223,7 +276,7 @@ def generate_sample_questions(req: GenerateSQLRequest):
     ### Sample Data:
     {sample_section}
 
-    Generate 3 example natural language questions that could be answered using a SQL SELECT query on the `{req.table_name}` table.
+    Generate 3 example investigative questions that could be answered using a SQL SELECT query on the `{req.table_name}` table.
     Do not include any explanations—only the questions, each as a separate bullet point.
     """
 
@@ -371,3 +424,29 @@ def detect_anomalies(req: DescribeResultsRequest):
             warnings.append(f"All values in `{col}` are `{val}` — is this intentional?")
 
     return {"warnings": warnings}
+
+class TableNameRequest(BaseModel):
+    columns: list[str]
+    sample_rows: list[dict]
+
+@app.post("/suggest-table-name")
+def suggest_table_name(req: TableNameRequest):
+    prompt = (
+        "Suggest a short, SQL-safe, lowercase table name for the following dataset.\n"
+        "Columns: " + ", ".join(req.columns) + "\n\n"
+        "Sample rows:\n" + "\n".join(str(row) for row in req.sample_rows[:3]) + "\n\n"
+        "Respond with only the suggested table name (no explanations)."
+    )
+
+    response = requests.post(LLM_URL, json={
+        "model": "qwen2.5-7b-instruct-1m",
+        "messages": [
+            {"role": "system", "content": "You are an expert data modeler."},
+            {"role": "user", "content": prompt}
+        ]
+    })
+
+    response.raise_for_status()
+    name = response.json()["choices"][0]["message"]["content"]
+    name = re.sub(r'[^a-zA-Z0-9_]', '_', name.strip())  # ensure SQL-safe
+    return {"suggested_name": name.lower()}

@@ -8,6 +8,7 @@ import sys
 import numpy as np
 import datetime
 import decimal
+import time
 
 # Add the folder containing functions.py to the Python path
 sys.path.append("/app/shared_utils")
@@ -100,7 +101,8 @@ if selected_table:
             while attempts < max_attempts:
                 attempts += 1
                 dict_res = requests.post(f"{BACKEND_URL}/data-dictionary-postgres", json={
-                    "table_name": selected_table
+                    "table_name": selected_table,
+                    "sample_data": make_json_safe(edited_sample.head(10).to_dict(orient="records"))
                 })
 
                 if dict_res.ok:

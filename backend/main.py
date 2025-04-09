@@ -3,7 +3,6 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from db import get_connection, get_table_schema, list_all_tables
-from prompt import create_data_dictionary_prompt, create_data_dictionary_prompt_from_sample_data
 import requests
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
@@ -45,7 +44,6 @@ def get_diverse_sample(df: pd.DataFrame, n=10) -> pd.DataFrame:
     # Step 1: Fill missing values safely
     for col in df_copy.columns:
         if pd.api.types.is_datetime64_any_dtype(df_copy[col]):
-            # Fill NaT with epoch (or another fallback date) before converting to int64
             df_copy.loc[:, col] = df_copy[col].fillna(pd.Timestamp("1970-01-01")).astype("int64")
         elif df_copy[col].dtype == "object":
             df_copy.loc[:, col] = df_copy[col].fillna("N/A")
@@ -57,8 +55,12 @@ def get_diverse_sample(df: pd.DataFrame, n=10) -> pd.DataFrame:
         le = LabelEncoder()
         df_copy.loc[:, col] = le.fit_transform(df_copy[col].astype(str))
 
-    # Step 3: Select only numeric columns (required by pairwise_distances)
+    # Step 3: Select only numeric columns
     df_numeric = df_copy.select_dtypes(include=["number"])
+
+    # 🛡️ Fallback if no numeric data to compute distance
+    if df_numeric.shape[1] == 0:
+        return df.sample(n=n)
 
     # Step 4: Compute pairwise distances
     distance_matrix = pairwise_distances(df_numeric, metric='euclidean')
@@ -147,12 +149,45 @@ def generate_sql(req: GenerateSQLRequest):
 
 class PostgresDictionaryRequest(BaseModel):
     table_name: str
+    sample_data: List[Dict[str, Any]]
 
 @app.post("/data-dictionary-postgres")
 def generate_postgres_data_dictionary(request: PostgresDictionaryRequest):
+    # Get schema and sample data
     schema = get_table_schema(request.table_name)
     schema_dict = {col: dtype for col, dtype in schema}
-    prompt = create_data_dictionary_prompt(request.table_name, schema)
+    
+    # Fetch diverse sample rows
+    df = request.sample_data
+    diverse_sample = get_diverse_sample(df, n=10)
+    sample_preview = "\n".join([str(row) for row in diverse_sample])
+
+    # Create inline prompt
+    schema_str = "\n".join([
+        f"- {column} ({dtype})"
+        for column, dtype in schema
+    ])
+    
+    prompt = f"""
+    You are a helpful assistant that describes database tables.
+
+    Given the schema and sample data of the `{request.table_name}` table:
+
+    ### Schema:
+    {schema_str}
+
+    ### Sample Data:
+    {sample_preview}
+
+    Generate a data dictionary that describes what each column likely means in plain English.
+
+    For each column, provide a short description of its meaning and its role in the dataset. Here's an example format:
+
+    - `column_name`: A description of the column
+
+    Please ensure the descriptions are short and clear.
+    Only return the markdown list.
+    """
 
     response = requests.post(LLM_URL, headers={"Content-Type": "application/json"}, json={
         "model": "qwen2.5-7b-instruct-1m",
@@ -164,13 +199,14 @@ def generate_postgres_data_dictionary(request: PostgresDictionaryRequest):
     })
     response.raise_for_status()
     result = response.json()["choices"][0]["message"]["content"]
-    print("LLM Response:\n", result)  # <- Debugging line
+    print("LLM Response:\n", result)  # Debugging
 
     entries = []
     for line in result.strip().splitlines():
-        match = re.match(r"-\s*\*\*([\w\d_]+)\s*\(([^)]+)\)\*\*:\s*(.+)", line)
+        match = re.match(r"-\s*`([\w\d_]+)`:\s*(.+)", line)
         if match:
-            col, dtype, desc = match.groups()
+            col, desc = match.groups()
+            dtype = schema_dict.get(col, "Unknown")
             entries.append({
                 "Column": col,
                 "Type": dtype,

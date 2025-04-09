@@ -21,34 +21,11 @@ st.set_page_config(page_title="Query Agent", layout="centered")
 st.title("🧠 Query Agent")
 st.caption("Ask questions in plain English and generate SQL queries using AI. Upload your data or connect to a database to get started.")
 
-data_source = st.radio(
-    "Choose your data source:", ["PostgreSQL Database", "Upload File"], horizontal=True
-)
-uploaded_file = None
 user_df = None
 selected_table = None
 
-# Initialize tracker
-if "prev_data_source" not in st.session_state:
-    st.session_state.prev_data_source = data_source
-
-# Detect a true change
-if st.session_state.prev_data_source != data_source:
-    # Clear session variables safely
-    for key in ["generated_sql", "query_result_df", "modified_sql", "filters", "question_input"]:
-        st.session_state.pop(key, None)
-
-    # Also clear selected_table and uploaded file refs
-    st.session_state.pop("selected_table", None)
-
-    # Update the tracker
-    st.session_state.prev_data_source = data_source
-
-    # Reset selected table if data source changes
-    selected_table = None
-
-# --- PostgreSQL selection ---
-if data_source == "PostgreSQL Database":
+# --- PostgreSQL ---
+with st.spinner("🔄 Connecting to Database..."):
     try:
         tables_response = requests.get(f"{BACKEND_URL}/tables")
         tables = tables_response.json() if tables_response.ok else []
@@ -70,91 +47,10 @@ if data_source == "PostgreSQL Database":
 
     selected_table = st.session_state.get("selected_table", selected_table)
 
-# --- File upload selection ---
-elif data_source == "Upload File":
-    selected_table = st.session_state.get("selected_table")
-    uploaded_file = st.file_uploader("Upload a CSV or Excel file", type=["csv", "xlsx"])
-
-    if uploaded_file is not None:
-        filename = uploaded_file.name
-
-        # Check if new file has been uploaded
-        if filename != st.session_state.get("uploaded_filename"):
-            try:
-                # Parse file
-                if filename.endswith(".csv"):
-                    user_df = pd.read_csv(uploaded_file)
-                elif filename.endswith(".xlsx"):
-                    user_df = pd.read_excel(uploaded_file)
-                else:
-                    st.error("Unsupported file format.")
-                    st.stop()
-
-                # Store file and dataframe in session
-                st.session_state["uploaded_filename"] = filename
-                st.session_state["uploaded_df"] = user_df
-
-                # Prepare data for LLM
-                sample_rows = make_json_safe(user_df.head(3).to_dict(orient="records"))
-
-                # Auto-suggest table name via LLM
-                response = requests.post(f"{BACKEND_URL}/suggest-table-name", json={
-                    "columns": list(user_df.columns),
-                    "sample_rows": sample_rows
-                })
-
-                if response.ok:
-                    suggested_name = response.json()["suggested_name"]
-                    st.session_state["selected_table"] = suggested_name
-                    selected_table = suggested_name
-
-                    # Register with backend
-                    register_payload = {
-                        "table_name": suggested_name,
-                        "rows": make_json_safe(user_df.to_dict(orient="records"))
-                    }
-                    register_res = requests.post(f"{BACKEND_URL}/register-upload", json=register_payload)\
-                    
-                    if register_res.ok:
-                        response_data = register_res.json()
-                        
-                        st.success(response_data.get("message", "✅ Upload successful!"))
-
-                        if "preview" in response_data:
-                            st.markdown("📋 **Preview of Uploaded Table**")
-                            st.dataframe(pd.DataFrame(response_data["preview"]))
-                        else:
-                            st.info("ℹ️ No preview data was returned.")
-                    else:
-                        st.error("❌ Upload failed.")
-                        try:
-                            error_details = register_res.json()
-                            st.json(error_details)
-                        except Exception:
-                            st.text(register_res.text)
-                else:
-                    st.warning("⚠️ Could not suggest table name.")
-
-                # conn = create_temp_sqlite_table(suggested_name, user_df)
-                # st.session_state["temp_sqlite_conn"] = conn
-
-                # res = requests.post(f"{BACKEND_URL}/register-upload", json={
-                #     "data": sample_rows
-                # })
-
-            except Exception as e:
-                st.error(f"Failed to load file: {e}")
-        else:
-            # Load cached version on rerun
-            user_df = st.session_state.get("uploaded_df")
-            selected_table = st.session_state.get("selected_table")
-
 # --- Data Dictionary and Sample Data ---
 if selected_table:
-    if data_source == "PostgreSQL Database":
-        st.markdown(f"**Selected Table:** `{selected_table}`")
-    elif data_source == "Upload File":
-        st.markdown(f"**Suggested Table Name:** `{selected_table}`")
+    st.markdown(f"**Selected Table:** `{selected_table}`")
+
     # Cache keys
     dict_key = f"data_dict_{selected_table}" if selected_table else "data_dict_uploaded"
     sample_key = f"sample_data_{selected_table}" if selected_table else "sample_data_uploaded"
@@ -162,89 +58,65 @@ if selected_table:
     # -----------------------
     # Sample Data
     # -----------------------
-    if sample_key not in st.session_state:
-        if data_source == "PostgreSQL Database":
+    with st.spinner("🔄 Generating Diverse Sample Data..."):
+        if sample_key not in st.session_state:
             sample_data_res = requests.get(f"{BACKEND_URL}/sample-data/{selected_table}")
             if sample_data_res.ok:
                 st.session_state[sample_key] = sample_data_res.json()
             else:
                 st.warning("Could not retrieve sample data.")
                 st.stop()
-        elif data_source == "Upload File":
-            # Send cleaned sample to backend to get diverse rows
-            try:
-                sample_rows = make_json_safe(user_df.head(500).to_dict(orient="records"))  # larger pool for diversity
 
-                payload = {
-                    "rows": sample_rows,
-                    "n": 10
-                }
+        # Display sample data
+        sample_data = st.session_state[sample_key]
 
-                diverse_res = requests.post(f"{BACKEND_URL}/diverse-sample", json=payload)
+        if not sample_data:
+            st.info("ℹ️ This data source is currently empty.")
+        else:
+            st.subheader("🔍 Sample Data")
+            st.caption("These rows were selected to show diverse examples from your data. \
+                        They help the LLM understand a broader range of patterns for better query generation."
+                        )
+            df_sample = pd.DataFrame(sample_data)
 
-                if diverse_res.ok:
-                    st.session_state[sample_key] = diverse_res.json()["sample"]
-                else:
-                    st.warning("⚠️ Could not generate diverse sample. Using first 10 rows instead.")
-                    st.session_state[sample_key] = user_df.head(10).to_dict(orient="records")
+            edited_sample = st.data_editor(
+                df_sample,
+                use_container_width=True,
+                hide_index=True,
+                key="editable_sample"
+                #num_rows="dynamic"
+            )
 
-            except Exception as e:
-                st.warning(f"⚠️ Failed to generate sample: {e}")
-                st.session_state[sample_key] = user_df.head(10).to_dict(orient="records")
-
-    # Display sample data
-    sample_data = st.session_state[sample_key]
-
-    if not sample_data:
-        st.info("ℹ️ This data source is currently empty.")
-    else:
-        st.subheader("🔍 Sample Data")
-        st.caption("These rows were selected to show diverse examples from your data. \
-                    They help the LLM understand a broader range of patterns for better query generation."
-                    )
-        df_sample = pd.DataFrame(sample_data)
-
-        edited_sample = st.data_editor(
-            df_sample,
-            use_container_width=True,
-            hide_index=True,
-            key="editable_sample"
-            #num_rows="dynamic"
-        )
-
-        # Update session with edited sample data
-        st.session_state[sample_key] = edited_sample.to_dict(orient="records")
+            # Update session with edited sample data
+            st.session_state[sample_key] = edited_sample.to_dict(orient="records")
 
     # -----------------------
     # Data Dictionary
     # -----------------------
-    if dict_key not in st.session_state:
-        if data_source == "PostgreSQL Database":
-            dict_res = requests.post(f"{BACKEND_URL}/data-dictionary-postgres", json={
-                "table_name": selected_table
-            })
-            if dict_res.ok:
-                st.session_state[dict_key] = dict_res.json()["dictionary"]
-                #st.json(st.session_state[dict_key]) # <- Debug
-                #st.write("Backend raw response:", dict_res.json()) # <- Debug
-            else:
-                st.warning("Could not generate data dictionary.")
-                st.stop()
-        elif data_source == "Upload File":
-            try:
-                dict_res = requests.post(f"{BACKEND_URL}/data-dictionary-upload", json={
-                    "table_name": selected_table,
-                    "sample_data": make_json_safe(st.session_state[sample_key])
+    with st.spinner("🔄 Generating Data Dictionary..."):
+        if dict_key not in st.session_state:
+            max_attempts = 3
+            attempts = 0
+            while attempts < max_attempts:
+                attempts += 1
+                dict_res = requests.post(f"{BACKEND_URL}/data-dictionary-postgres", json={
+                    "table_name": selected_table
                 })
-                if dict_res.ok:
-                    st.session_state[dict_key] = dict_res.json()["dictionary"]
-                    #st.json(dict_res.json()) # <- Debug
 
+                if dict_res.ok:
+                    dictionary = dict_res.json().get("dictionary", [])
+                    if dictionary:
+                        st.session_state[dict_key] = dictionary
+                        break
+                    else:
+                        st.info(f"⚠️ Data dictionary was empty. Retrying... (Attempt {attempts}/{max_attempts})")
+                        time.sleep(1)  # Optional: wait before retrying
                 else:
-                    st.warning("Could not generate data dictionary from file upload.")
+                    st.warning("❌ Failed to reach backend for data dictionary generation.")
                     st.stop()
-            except Exception as e:
-                st.error(f"Error generating dictionary from uploaded file: {e}")
+
+            else:
+                st.error("⚠️ Data dictionary could not be generated after multiple attempts.")
                 st.stop()
 
     st.subheader("📘 Data Dictionary")
@@ -266,42 +138,43 @@ if selected_table:
 
 # --- Question and SQL generation ---
 if selected_table:
-    question_key = f"sample_questions_{selected_table}"
+    with st.spinner("🔄 Generating Sample Questions..."):
+        question_key = f"sample_questions_{selected_table}"
 
-    sample_data = clean_sample_data(sample_data)
+        sample_data = clean_sample_data(sample_data)
 
-    if question_key not in st.session_state:
-        try:
-            payload = {
-                "table_name": selected_table,
-                "question": "",
-                "data_dictionary": edited_dict.to_dict(orient="records"),
-                "sample_data": sample_data
-            }
-            res = requests.post(f"{BACKEND_URL}/generate-sample-questions", json=payload)
+        if question_key not in st.session_state:
+            try:
+                payload = {
+                    "table_name": selected_table,
+                    "question": "",
+                    "data_dictionary": edited_dict.to_dict(orient="records"),
+                    "sample_data": sample_data
+                }
+                res = requests.post(f"{BACKEND_URL}/generate-sample-questions", json=payload)
 
-            if res.ok:
-                all_questions = res.json()["questions"]
-                st.session_state[question_key] = all_questions
-            else:
-                st.warning("Failed to get sample questions from backend.")
+                if res.ok:
+                    all_questions = res.json()["questions"]
+                    st.session_state[question_key] = all_questions
+                else:
+                    st.warning("Failed to get sample questions from backend.")
+                    st.session_state[question_key] = []
+            except Exception as e:
+                st.warning(f"⚠️ Sample question generation failed: {e}")
                 st.session_state[question_key] = []
-        except Exception as e:
-            st.warning(f"⚠️ Sample question generation failed: {e}")
-            st.session_state[question_key] = []
 
-    # Show example questions if available
-    example_qs = st.session_state.get(question_key, [])
-    if example_qs:
-        st.markdown("**💡 Example Questions:**")
-        cols = st.columns(len(example_qs))
-        for i, q in enumerate(example_qs):
-            if cols[i].button(q, key=f"q_btn_{i}"):
-                st.session_state["question_input"] = q
-                st.rerun()
+        # Show example questions if available
+        example_qs = st.session_state.get(question_key, [])
+        if example_qs:
+            st.markdown("**💡 Example Questions:**")
+            cols = st.columns(len(example_qs))
+            for i, q in enumerate(example_qs):
+                if cols[i].button(q, key=f"q_btn_{i}"):
+                    st.session_state["question_input"] = q
+                    st.rerun()
 
-    # Question input field
-    question = st.text_area("What do you want to know?", height=100, key="question_input")
+        # Question input field
+        question = st.text_area("What do you want to know?", height=100, key="question_input")
 
     # Generate SQL button
     if st.button("Generate SQL"):
@@ -311,8 +184,6 @@ if selected_table:
             "data_dictionary": edited_dict.to_dict(orient="records"),
             "sample_data": sample_data
         }
-
-        #st.write("📦 Payload being sent:", payload)
 
         res = requests.post(f"{BACKEND_URL}/generate-sql", json=payload)
         if res.ok:
@@ -327,7 +198,7 @@ if "generated_sql" in st.session_state and selected_table:
     st.code(sql, language="sql")
     
     # Refresh dictionary button
-    with st.expander("🔧 Refine Your Query"):
+    with st.expander("🔧 Customize Your Query"):
         filters = {}
 
         for row in edited_dict.to_dict(orient="records"):
@@ -439,90 +310,97 @@ if "generated_sql" in st.session_state and selected_table:
                     st.error(f"Execution failed: {run_res.json().get('error', 'Unknown error')}")
 
     if st.button("▶️ Run Generated SQL"):
-        run_res = requests.post(f"{BACKEND_URL}/run-sql", json={"sql": st.session_state["generated_sql"]})
+        with st.spinner("🔄 Running Generated SQL..."):
+            run_res = requests.post(f"{BACKEND_URL}/run-sql", json={"sql": st.session_state["generated_sql"]})
 
-        if run_res.ok:
-            result = run_res.json()
-            df_result = pd.DataFrame(result["rows"], columns=result["columns"])
-            st.session_state["query_result_df"] = df_result
-        else:
-            st.error(f"Execution failed: {run_res.json().get('error', 'Unknown error')}")
+            if run_res.ok:
+                result = run_res.json()
+                if result and "rows" in result and "columns" in result:
+                    df_result = pd.DataFrame(result["rows"], columns=result["columns"])
+                    st.session_state["query_result_df"] = df_result
+                else:
+                    st.error("⚠️ Unexpected response format from backend.")
+            else:
+                error_msg = run_res.json().get("error", "Unknown error")
+                st.error(f"Execution failed: {error_msg}")
 
 # --- Show Query Result ---
 if "query_result_df" in st.session_state and (selected_table or user_df is not None):
-    df_result = st.session_state["query_result_df"]
+    with st.spinner("🔄 Generating Summary Items..."):
+        df_result = st.session_state["query_result_df"]
+        cleaned_rows = make_json_safe(df_result.head(10).to_dict(orient="records"))
 
-    # Show the table
-    st.subheader("📊 Query Results")
-    st.dataframe(df_result)
+        # Show the table
+        st.subheader("📊 Query Results")
+        st.dataframe(df_result)
 
-    # Generate the summary
-    try:
-        summary_res = requests.post(f"{BACKEND_URL}/describe-results", json={
-            "sql": st.session_state["generated_sql"],  # or modified_sql
-            "rows": df_result.head(10).to_dict(orient="records")
-        })
+        # Generate the summary
+        try:
+            summary_res = requests.post(f"{BACKEND_URL}/describe-results", json={
+                "sql": st.session_state["generated_sql"],  # or modified_sql
+                "rows": cleaned_rows
+            })
 
-        if summary_res.ok:
-            st.markdown("#### 🧠 Summary of Results")
-            st.success(summary_res.json()["summary"])
-        else:
-            st.warning("Could not generate summary of results.")
-    except Exception as e:
-        st.warning(f"Error summarizing results: {e}")
-
-    # Anomaly/Trend detection
-    try:
-        detect_res = requests.post(f"{BACKEND_URL}/detect-anomalies", json={
-            "sql": st.session_state["generated_sql"],
-            "rows": df_result.to_dict(orient="records")
-        })
-
-        if detect_res.ok:
-            anomalies = detect_res.json().get("warnings", [])
-            if anomalies:
-                st.markdown("#### ⚠️ Anomalies / Warnings")
-                with st.expander("View Anomaly Log", expanded=True):
-                    log = "\n".join(f"- {w}" for w in anomalies)
-                    st.code(log, language="markdown")
-    except Exception as e:
-        st.warning(f"Anomaly check failed: {e}")
-
-    # Generate Chart
-    try:
-        chart_res = requests.post(f"{BACKEND_URL}/suggest-chart", json={
-            "sql": st.session_state["generated_sql"],
-            "rows": df_result.head(10).to_dict(orient="records")
-        })
-
-        if chart_res.ok:
-            chart_info = chart_res.json()
-            chart_type = chart_info["chart_type"]
-            x = chart_info["x_axis"]
-            y = chart_info["y_axis"]
-
-            st.markdown("#### 📊 Suggested Chart")
-
-            if not chart_type or chart_type == "none":
-                st.info("ℹ️ No chart was recommended based on the query result. The data may not be suitable for visualization.")
-            elif x not in df_result.columns or y not in df_result.columns:
-                st.warning(f"⚠️ Suggested columns `{x}` or `{y}` not found in the query result.")
+            if summary_res.ok:
+                st.markdown("#### 🧠 Summary of Results")
+                st.success(summary_res.json()["summary"])
             else:
-                st.write(f"**Type:** {chart_type.title()}  \n**X-axis:** `{x}`  \n**Y-axis:** `{y}`")
+                st.warning("Could not generate summary of results.")
+        except Exception as e:
+            st.warning(f"Error summarizing results: {e}")
 
-                chart_type = chart_info.get("chart_type", "").strip().lower()
-                if chart_type == "bar_chart":
-                    st.bar_chart(df_result.set_index(x)[y])
-                elif chart_type == "line_chart":
-                    st.line_chart(df_result.set_index(x)[y])
-                elif chart_type == "area_chart":
-                    st.area_chart(df_result.set_index(x)[y])
-                elif chart_type == "scatter_chart":
-                    st.scatter_chart(df_result[[x, y]])
+        # Anomaly/Trend detection
+        try:
+            detect_res = requests.post(f"{BACKEND_URL}/detect-anomalies", json={
+                "sql": st.session_state["generated_sql"],
+                "rows": cleaned_rows
+            })
+
+            if detect_res.ok:
+                anomalies = detect_res.json().get("warnings", [])
+                if anomalies:
+                    st.markdown("#### ⚠️ Anomalies / Warnings")
+                    with st.expander("View Anomaly Log", expanded=True):
+                        log = "\n".join(f"- {w}" for w in anomalies)
+                        st.code(log, language="markdown")
+        except Exception as e:
+            st.warning(f"Anomaly check failed: {e}")
+
+        # Generate Chart
+        try:
+            chart_res = requests.post(f"{BACKEND_URL}/suggest-chart", json={
+                "sql": st.session_state["generated_sql"],
+                "rows": cleaned_rows
+            })
+
+            if chart_res.ok:
+                chart_info = chart_res.json()
+                chart_type = chart_info["chart_type"]
+                x = chart_info["x_axis"]
+                y = chart_info["y_axis"]
+
+                st.markdown("#### 📊 Suggested Chart")
+
+                if not chart_type or chart_type == "none":
+                    st.info("ℹ️ No chart was recommended based on the query result. The data may not be suitable for visualization.")
+                elif x not in df_result.columns or y not in df_result.columns:
+                    st.warning(f"⚠️ Suggested columns `{x}` or `{y}` not found in the query result.")
                 else:
-                    st.warning(f"⚠️ Chart type `{chart_type}` is not supported for rendering.")
+                    st.write(f"**Type:** {chart_type.title()}  \n**X-axis:** `{x}`  \n**Y-axis:** `{y}`")
 
-        else:
-            st.warning("⚠️ Chart suggestion failed.")
-    except Exception as e:
-        st.warning(f"⚠️ Chart suggestion error: {e}")
+                    chart_type = chart_info.get("chart_type", "").strip().lower()
+                    if chart_type == "bar_chart":
+                        st.bar_chart(df_result.set_index(x)[y])
+                    elif chart_type == "line_chart":
+                        st.line_chart(df_result.set_index(x)[y])
+                    elif chart_type == "area_chart":
+                        st.area_chart(df_result.set_index(x)[y])
+                    elif chart_type == "scatter_chart":
+                        st.scatter_chart(df_result[[x, y]])
+                    else:
+                        st.warning(f"⚠️ Chart type `{chart_type}` is not supported for rendering.")
+
+            else:
+                st.warning("⚠️ Chart suggestion failed.")
+        except Exception as e:
+            st.warning(f"⚠️ Chart suggestion error: {e}")

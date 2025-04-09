@@ -1,10 +1,5 @@
 import psycopg2
 import os
-from sqlalchemy import create_engine
-
-# Replace this with your actual PostgreSQL temp DB URI
-DATABASE_URL = "postgresql://postgres:postgres@temp-db:5432/temp"
-engine = create_engine(DATABASE_URL)
 
 def get_connection():
     return psycopg2.connect(

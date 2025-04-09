@@ -15,20 +15,13 @@ from typing import List, Dict, Any, Optional
 import math
 import datetime
 import decimal
-from threading import Lock
-from sqlalchemy import create_engine
-import logging
-
-logger = logging.getLogger("uvicorn.error")
-logger.setLevel(logging.INFO)
-temp_db_registry = {}
-temp_db_lock = Lock()
+import traceback
 
 # Add the folder containing functions.py to the Python path
 sys.path.append("/app/shared_utils")
 
 # Import directly from the file
-from functions import clean_sample_data, make_json_safe# register_temp_table
+from functions import clean_sample_data, make_json_safe
 
 app = FastAPI(debug=True)
 
@@ -123,10 +116,12 @@ def generate_sql(req: GenerateSQLRequest):
     Generate a SQL SELECT query that best answers the question.
     Use only the `{req.table_name}` table.
 
-    Only generate valid PostgreSQL syntax.
-    - Use double quotes (e.g., "column_name") **only** if the column name contains special characters or was quoted during creation.
-    - Otherwise, prefer lowercase unquoted column names, since PostgreSQL treats unquoted identifiers as lowercase.
-    - Do not return explanations—only the SQL.
+    Ensure the output is valid PostgreSQL syntax.
+
+    Guidelines:
+    - If the question involves time filtering and the date column is a Unix timestamp (e.g., double precision), cast it using `to_timestamp(column_name)`.
+    - Use double quotes (e.g., "column_name") only if the column name contains uppercase letters or special characters.
+    - Do not include explanations—only output the raw SQL.
     """
 
     response = requests.post(LLM_URL, headers={"Content-Type": "application/json"}, json={
@@ -135,7 +130,7 @@ def generate_sql(req: GenerateSQLRequest):
             {"role": "system", "content": "You are a helpful assistant that generates SQL queries from natural language."},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.2
+        "temperature": 0
     })
     response.raise_for_status()
 
@@ -156,6 +151,7 @@ class PostgresDictionaryRequest(BaseModel):
 @app.post("/data-dictionary-postgres")
 def generate_postgres_data_dictionary(request: PostgresDictionaryRequest):
     schema = get_table_schema(request.table_name)
+    schema_dict = {col: dtype for col, dtype in schema}
     prompt = create_data_dictionary_prompt(request.table_name, schema)
 
     response = requests.post(LLM_URL, headers={"Content-Type": "application/json"}, json={
@@ -172,49 +168,12 @@ def generate_postgres_data_dictionary(request: PostgresDictionaryRequest):
 
     entries = []
     for line in result.strip().splitlines():
-        match = re.match(r"-\s*`?([\w\d_]+)`?\s*:\s*(.+)", line)
+        match = re.match(r"-\s*\*\*([\w\d_]+)\s*\(([^)]+)\)\*\*:\s*(.+)", line)
         if match:
-            col, desc = match.groups()
+            col, dtype, desc = match.groups()
             entries.append({
                 "Column": col,
-                "Description": desc
-            })
-
-    return {"dictionary": entries}
-
-class UploadDictionaryRequest(BaseModel):
-    table_name: str
-    sample_data: list[dict]
-
-@app.post("/data-dictionary-upload")
-def generate_upload_data_dictionary(request: UploadDictionaryRequest):
-    # Create the prompt using the sample data
-    prompt = create_data_dictionary_prompt_from_sample_data(
-        request.table_name,
-        request.sample_data
-    )
-
-    # Send the request to the LLM
-    response = requests.post(LLM_URL, headers={"Content-Type": "application/json"}, json={
-        "model": "qwen2.5-7b-instruct-1m",
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant that describes columns based on sample data."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.3
-    })
-
-    response.raise_for_status()
-    result = response.json()["choices"][0]["message"]["content"]
-
-    # Parse the result into column descriptions
-    entries = []
-    for line in result.strip().splitlines():
-        match = re.match(r"-\s*`?(\w+)`?\s*:\s*(.+)", line)
-        if match:
-            col, desc = match.groups()
-            entries.append({
-                "Column": col,
+                "Type": dtype,
                 "Description": desc
             })
 
@@ -263,7 +222,6 @@ def get_diverse_sample_endpoint(req: SampleRequest):
 
 class RunSQLRequest(BaseModel):
     sql: str
-    use_temp_db: Optional[bool] = False
 
 @app.post("/run-sql")
 def run_sql(request: RunSQLRequest):
@@ -291,30 +249,25 @@ def run_sql(request: RunSQLRequest):
         )
 
     try:
-        # 🧠 Decide which DB to use
-        if request.use_temp_db:
-            with temp_db_lock:
-                if len(temp_db_registry) == 0:
-                    return JSONResponse(
-                        content={"error": "No temporary database available."},
-                        status_code=400
-                    )
-                conn = list(temp_db_registry.values())[-1]  # Use most recent temp DB
-        else:
-            conn = get_connection()
-
+        conn = get_connection()
         cur = conn.cursor()
         cur.execute(request.sql)
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description]
         cur.close()
-        if not request.use_temp_db:
-            conn.close()
-
+        conn.close()
         return {"columns": columns, "rows": rows}
-
     except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=400)
+        print("❌ SQL execution error:")
+        print(traceback.format_exc())
+        return JSONResponse(
+            content={
+                "error": str(e),
+                "columns": [],
+                "rows": []
+            },
+            status_code=400
+        )
 
 @app.post("/generate-sample-questions")
 def generate_sample_questions(req: GenerateSQLRequest):
@@ -357,6 +310,7 @@ def generate_sample_questions(req: GenerateSQLRequest):
 
     Generate 3 example investigative questions that could be answered using a SQL SELECT query on the `{req.table_name}` table.
     Do not include any explanations—only the questions, each as a separate bullet point.
+    Do not ask questions related to date or time.
     """
 
     response = requests.post(LLM_URL, headers={"Content-Type": "application/json"}, json={
@@ -365,7 +319,7 @@ def generate_sample_questions(req: GenerateSQLRequest):
             {"role": "system", "content": "You are a helpful assistant that suggests natural language queries for SQL generation."},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.3
+        "temperature": 0
     })
     response.raise_for_status()
 
@@ -402,7 +356,7 @@ def describe_results(req: DescribeResultsRequest):
             {"role": "system", "content": "You are a helpful assistant who explains SQL query results to business users."},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.3
+        "temperature": 0
     })
     response.raise_for_status()
 
@@ -452,7 +406,7 @@ def suggest_chart(req: DescribeResultsRequest):
             {"role": "system", "content": "You are a helpful assistant for visualizing SQL result data."},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.3
+        "temperature": 0
     })
     response.raise_for_status()
 
@@ -503,61 +457,3 @@ def detect_anomalies(req: DescribeResultsRequest):
             warnings.append(f"All values in `{col}` are `{val}` — is this intentional?")
 
     return {"warnings": warnings}
-
-class TableNameRequest(BaseModel):
-    columns: list[str]
-    sample_rows: list[dict]
-
-@app.post("/suggest-table-name")
-def suggest_table_name(req: TableNameRequest):
-    prompt = (
-        "Suggest a short, SQL-safe, lowercase table name for the following dataset.\n"
-        "Columns: " + ", ".join(req.columns) + "\n\n"
-        "Sample rows:\n" + "\n".join(str(row) for row in req.sample_rows[:3]) + "\n\n"
-        "Respond with only the suggested table name (no explanations)."
-    )
-
-    response = requests.post(LLM_URL, json={
-        "model": "qwen2.5-7b-instruct-1m",
-        "messages": [
-            {"role": "system", "content": "You are an expert data modeler."},
-            {"role": "user", "content": prompt}
-        ]
-    })
-
-    response.raise_for_status()
-    name = response.json()["choices"][0]["message"]["content"]
-    name = re.sub(r'[^a-zA-Z0-9_]', '_', name.strip())  # ensure SQL-safe
-    return {"suggested_name": name.lower()}
-
-class RegisterUploadRequest(BaseModel):
-    table_name: str
-    rows: List[Dict[str, Any]]
-
-@app.post("/register-upload")
-def register_uploaded_file(req: RegisterUploadRequest):
-    df = pd.DataFrame(req.rows)
-
-    try:
-        register_temp_table(req.table_name, df)
-
-        preview = df.head(5).to_dict(orient="records")
-
-        return {
-            "message": f"Temporary PostgreSQL table `{req.table_name}` registered.",
-            "preview": preview
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-def register_temp_table(table_name: str, df: pd.DataFrame):
-    df.to_sql(table_name, con=engine, index=False, if_exists="replace")
-    temp_table_registry[table_name] = True
-
-    try:
-        with engine.connect() as conn:
-            result_df = pd.read_sql(f'SELECT * FROM "{table_name}" LIMIT 5', conn)
-            logger.info(f"\n📦 Registered table `{table_name}` preview:")
-            logger.info("\n" + result_df.to_string(index=False))
-    except Exception as e:
-        logger.warning(f"⚠️ Could not preview data from `{table_name}`: {e}")

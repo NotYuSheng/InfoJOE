@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -11,18 +11,26 @@ from sklearn.metrics import pairwise_distances
 import numpy as np
 import re
 import sys
-from typing import List, Dict
+from typing import List, Dict, Any, Optional
 import math
 import datetime
 import decimal
+from threading import Lock
+from sqlalchemy import create_engine
+import logging
+
+logger = logging.getLogger("uvicorn.error")
+logger.setLevel(logging.INFO)
+temp_db_registry = {}
+temp_db_lock = Lock()
 
 # Add the folder containing functions.py to the Python path
 sys.path.append("/app/shared_utils")
 
 # Import directly from the file
-from functions import clean_sample_data, make_json_safe
+from functions import clean_sample_data, make_json_safe# register_temp_table
 
-app = FastAPI()
+app = FastAPI(debug=True)
 
 # Allow frontend (Streamlit) to access the backend
 app.add_middleware(
@@ -33,18 +41,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-LLM_URL = "http://192.168.1.16:1234/v1/chat/completions"
+LLM_URL = "http://192.168.1.34:1234/v1/chat/completions"
 
 def get_diverse_sample(df: pd.DataFrame, n=10) -> pd.DataFrame:
     if len(df) <= n:
         return df
 
-    # Clean and encode
     df_copy = df.copy()
 
     # Step 1: Fill missing values safely
     for col in df_copy.columns:
-        if df_copy[col].dtype == "object":
+        if pd.api.types.is_datetime64_any_dtype(df_copy[col]):
+            # Fill NaT with epoch (or another fallback date) before converting to int64
+            df_copy.loc[:, col] = df_copy[col].fillna(pd.Timestamp("1970-01-01")).astype("int64")
+        elif df_copy[col].dtype == "object":
             df_copy.loc[:, col] = df_copy[col].fillna("N/A")
         else:
             df_copy.loc[:, col] = df_copy[col].fillna(0)
@@ -54,10 +64,16 @@ def get_diverse_sample(df: pd.DataFrame, n=10) -> pd.DataFrame:
         le = LabelEncoder()
         df_copy.loc[:, col] = le.fit_transform(df_copy[col].astype(str))
 
-    distance_matrix = pairwise_distances(df_copy, metric='euclidean')
-    selected_indices = [np.random.randint(len(df_copy))]
+    # Step 3: Select only numeric columns (required by pairwise_distances)
+    df_numeric = df_copy.select_dtypes(include=["number"])
+
+    # Step 4: Compute pairwise distances
+    distance_matrix = pairwise_distances(df_numeric, metric='euclidean')
+
+    # Step 5: Greedy diverse sample selection
+    selected_indices = [np.random.randint(len(df_numeric))]
     for _ in range(n - 1):
-        remaining = list(set(range(len(df_copy))) - set(selected_indices))
+        remaining = list(set(range(len(df_numeric))) - set(selected_indices))
         if not remaining:
             break
         max_distances = distance_matrix[remaining][:, selected_indices].mean(axis=1)
@@ -105,7 +121,12 @@ def generate_sql(req: GenerateSQLRequest):
     \"\"\"{req.question}\"\"\"
 
     Generate a SQL SELECT query that best answers the question.
-    Use only the `{req.table_name}` table. Do not return explanations—only the SQL.
+    Use only the `{req.table_name}` table.
+
+    Only generate valid PostgreSQL syntax.
+    - Use double quotes (e.g., "column_name") **only** if the column name contains special characters or was quoted during creation.
+    - Otherwise, prefer lowercase unquoted column names, since PostgreSQL treats unquoted identifiers as lowercase.
+    - Do not return explanations—only the SQL.
     """
 
     response = requests.post(LLM_URL, headers={"Content-Type": "application/json"}, json={
@@ -151,7 +172,7 @@ def generate_postgres_data_dictionary(request: PostgresDictionaryRequest):
 
     entries = []
     for line in result.strip().splitlines():
-        match = re.match(r"-\s*`?(\w+)`?\s*:\s*(.+)", line)
+        match = re.match(r"-\s*`?([\w\d_]+)`?\s*:\s*(.+)", line)
         if match:
             col, desc = match.groups()
             entries.append({
@@ -242,13 +263,19 @@ def get_diverse_sample_endpoint(req: SampleRequest):
 
 class RunSQLRequest(BaseModel):
     sql: str
+    use_temp_db: Optional[bool] = False
 
 @app.post("/run-sql")
 def run_sql(request: RunSQLRequest):
     sql = request.sql.strip().lower()
 
     FORBIDDEN = ["drop", "delete", "insert", "update", "alter", "truncate"]
-    forbidden_word = next((word for word in FORBIDDEN if word in sql.lower()), None)
+
+    # Check for exact keyword matches using word boundaries
+    forbidden_word = next(
+        (word for word in FORBIDDEN if re.search(rf"\b{re.escape(word)}\b", sql)),
+        None
+    )
 
     if forbidden_word:
         return JSONResponse(
@@ -264,14 +291,28 @@ def run_sql(request: RunSQLRequest):
         )
 
     try:
-        conn = get_connection()
+        # 🧠 Decide which DB to use
+        if request.use_temp_db:
+            with temp_db_lock:
+                if len(temp_db_registry) == 0:
+                    return JSONResponse(
+                        content={"error": "No temporary database available."},
+                        status_code=400
+                    )
+                conn = list(temp_db_registry.values())[-1]  # Use most recent temp DB
+        else:
+            conn = get_connection()
+
         cur = conn.cursor()
         cur.execute(request.sql)
         rows = cur.fetchall()
         columns = [desc[0] for desc in cur.description]
         cur.close()
-        conn.close()
+        if not request.use_temp_db:
+            conn.close()
+
         return {"columns": columns, "rows": rows}
+
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=400)
 
@@ -488,3 +529,35 @@ def suggest_table_name(req: TableNameRequest):
     name = response.json()["choices"][0]["message"]["content"]
     name = re.sub(r'[^a-zA-Z0-9_]', '_', name.strip())  # ensure SQL-safe
     return {"suggested_name": name.lower()}
+
+class RegisterUploadRequest(BaseModel):
+    table_name: str
+    rows: List[Dict[str, Any]]
+
+@app.post("/register-upload")
+def register_uploaded_file(req: RegisterUploadRequest):
+    df = pd.DataFrame(req.rows)
+
+    try:
+        register_temp_table(req.table_name, df)
+
+        preview = df.head(5).to_dict(orient="records")
+
+        return {
+            "message": f"Temporary PostgreSQL table `{req.table_name}` registered.",
+            "preview": preview
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def register_temp_table(table_name: str, df: pd.DataFrame):
+    df.to_sql(table_name, con=engine, index=False, if_exists="replace")
+    temp_table_registry[table_name] = True
+
+    try:
+        with engine.connect() as conn:
+            result_df = pd.read_sql(f'SELECT * FROM "{table_name}" LIMIT 5', conn)
+            logger.info(f"\n📦 Registered table `{table_name}` preview:")
+            logger.info("\n" + result_df.to_string(index=False))
+    except Exception as e:
+        logger.warning(f"⚠️ Could not preview data from `{table_name}`: {e}")

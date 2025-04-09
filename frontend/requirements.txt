@@ -1,5 +1,5 @@
-streamlit
-requests
-pandas
-xlsxwriter
-openpyxl
+streamlit==1.44.1
+requests==2.32.3
+pandas==2.2.3
+xlsxwriter==3.2.2
+openpyxl==3.1.5

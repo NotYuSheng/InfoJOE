@@ -63,7 +63,7 @@ if data_source == "PostgreSQL Database":
     st.subheader("📋 Select a Table:")
     cols = st.columns(3)
     for i, table in enumerate(tables):
-        if cols[i % 3].button(table):
+        if cols[i % 3].button(table, use_container_width=True):
             selected_table = table
             st.session_state["selected_table"] = table
             st.session_state.pop(f"data_dict_{table}", None)
@@ -84,8 +84,11 @@ elif data_source == "Upload File":
                 # Parse file
                 if filename.endswith(".csv"):
                     user_df = pd.read_csv(uploaded_file)
-                else:
+                elif filename.endswith(".xlsx"):
                     user_df = pd.read_excel(uploaded_file)
+                else:
+                    st.error("Unsupported file format.")
+                    st.stop()
 
                 # Store file and dataframe in session
                 st.session_state["uploaded_filename"] = filename
@@ -104,9 +107,41 @@ elif data_source == "Upload File":
                     suggested_name = response.json()["suggested_name"]
                     st.session_state["selected_table"] = suggested_name
                     selected_table = suggested_name
-                    st.info(f"🤖 Suggested Table Name: `{suggested_name}`")
+
+                    # Register with backend
+                    register_payload = {
+                        "table_name": suggested_name,
+                        "rows": make_json_safe(user_df.to_dict(orient="records"))
+                    }
+                    register_res = requests.post(f"{BACKEND_URL}/register-upload", json=register_payload)\
+                    
+                    if register_res.ok:
+                        response_data = register_res.json()
+                        
+                        st.success(response_data.get("message", "✅ Upload successful!"))
+
+                        if "preview" in response_data:
+                            st.markdown("📋 **Preview of Uploaded Table**")
+                            st.dataframe(pd.DataFrame(response_data["preview"]))
+                        else:
+                            st.info("ℹ️ No preview data was returned.")
+                    else:
+                        st.error("❌ Upload failed.")
+                        try:
+                            error_details = register_res.json()
+                            st.json(error_details)
+                        except Exception:
+                            st.text(register_res.text)
                 else:
                     st.warning("⚠️ Could not suggest table name.")
+
+                # conn = create_temp_sqlite_table(suggested_name, user_df)
+                # st.session_state["temp_sqlite_conn"] = conn
+
+                # res = requests.post(f"{BACKEND_URL}/register-upload", json={
+                #     "data": sample_rows
+                # })
+
             except Exception as e:
                 st.error(f"Failed to load file: {e}")
         else:
@@ -114,11 +149,12 @@ elif data_source == "Upload File":
             user_df = st.session_state.get("uploaded_df")
             selected_table = st.session_state.get("selected_table")
 
-
 # --- Data Dictionary and Sample Data ---
 if selected_table:
-    st.markdown(f"**Selected Table:** `{selected_table}`")
-
+    if data_source == "PostgreSQL Database":
+        st.markdown(f"**Selected Table:** `{selected_table}`")
+    elif data_source == "Upload File":
+        st.markdown(f"**Suggested Table Name:** `{selected_table}`")
     # Cache keys
     dict_key = f"data_dict_{selected_table}" if selected_table else "data_dict_uploaded"
     sample_key = f"sample_data_{selected_table}" if selected_table else "sample_data_uploaded"
@@ -189,6 +225,8 @@ if selected_table:
             })
             if dict_res.ok:
                 st.session_state[dict_key] = dict_res.json()["dictionary"]
+                #st.json(st.session_state[dict_key]) # <- Debug
+                #st.write("Backend raw response:", dict_res.json()) # <- Debug
             else:
                 st.warning("Could not generate data dictionary.")
                 st.stop()
@@ -200,8 +238,7 @@ if selected_table:
                 })
                 if dict_res.ok:
                     st.session_state[dict_key] = dict_res.json()["dictionary"]
-
-                    st.json(dict_res.json())
+                    #st.json(dict_res.json()) # <- Debug
 
                 else:
                     st.warning("Could not generate data dictionary from file upload.")
@@ -227,7 +264,7 @@ if selected_table:
         st.session_state.pop(dict_key, None)
         st.rerun()
 
-# Question and SQL generation
+# --- Question and SQL generation ---
 if selected_table:
     question_key = f"sample_questions_{selected_table}"
 
@@ -283,7 +320,7 @@ if selected_table:
         else:
             st.error("Something went wrong!")
 
-# Show Generated SQL
+# --- Show Generated SQL ---
 if "generated_sql" in st.session_state and selected_table:
     sql = st.session_state["generated_sql"]
     st.subheader("Generated SQL:")
@@ -411,7 +448,7 @@ if "generated_sql" in st.session_state and selected_table:
         else:
             st.error(f"Execution failed: {run_res.json().get('error', 'Unknown error')}")
 
-# After query result is shown
+# --- Show Query Result ---
 if "query_result_df" in st.session_state and (selected_table or user_df is not None):
     df_result = st.session_state["query_result_df"]
 

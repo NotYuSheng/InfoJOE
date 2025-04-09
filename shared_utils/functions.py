@@ -2,6 +2,11 @@ import math
 import numpy as np
 import datetime
 import decimal
+import pandas as pd
+import logging
+
+logger = logging.getLogger("uvicorn.error")
+logger.setLevel(logging.INFO)
 
 def clean_sample_data(data: list[dict]) -> list[dict]:
     def convert(v):
@@ -34,3 +39,5 @@ def make_json_safe(data):
         {k: clean_value(v) for k, v in row.items()}
         for row in data
     ]
+
+

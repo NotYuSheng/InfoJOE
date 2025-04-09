@@ -1,16 +1,16 @@
 services:
-  query-agent-db:
-    container_name: query-agent-db
-    image: postgres:15
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: postgres
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-    ports:
-      - "5432:5432"
-    volumes:
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+  # query-agent-db:
+  #   container_name: query-agent-db
+  #   image: postgres:15
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB: postgres
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: password
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
 
   query-agent-backend:
     container_name: query-agent-backend
@@ -18,15 +18,21 @@ services:
     restart: unless-stopped
     ports:
       - "3000:8000"
-    depends_on:
-      - query-agent-db
+    # depends_on:
+    #   - query-agent-db
     environment:
-      POSTGRES_DB: postgres
+      # POSTGRES_DB: postgres
+      # POSTGRES_USER: postgres
+      # POSTGRES_PASSWORD: password
+      # POSTGRES_HOST: query-agent-db
+      POSTGRES_HOST: ingestor-db
+      POSTGRES_DB: mydatabase
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_HOST: query-agent-db
+      POSTGRES_PASSWORD: postgres
     volumes:
       - ./shared_utils:/app/shared_utils
+    networks:
+      - shared-network
 
   query-agent-frontend:
     container_name: query-agent-frontend
@@ -38,3 +44,9 @@ services:
       - query-agent-backend
     volumes:
       - ./shared_utils:/app/shared_utils
+    networks:
+      - shared-network
+
+networks:
+  shared-network:
+    external: true

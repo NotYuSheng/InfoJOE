@@ -1,0 +1,65 @@
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+]
+
+line-length = 90
+
+[lint]
+select = ["E", "F"]
+ignore = [
+    "RUF",
+    "ANN",
+    "S101",
+    "D406",
+    "D203",
+    "D213",
+    "T201",
+    "D100",
+    "FBT002",
+    "RET504",
+    "E501",
+    "TC003",
+    "TC001",
+    "FBT001",
+    "C901",
+    "PLR0912",
+    "PLR0915",
+    "D205",
+    "PD901",
+    "PD002",
+    "FIX002",
+    "TD002",
+    "TD003",
+]
+
+[lint.per-file-ignores]
+# Ignore test files, just be happy there are tests.
+"*test*.py" = ["ALL"]
+# Tell ruff to be quiet about docstrings and unused imports in inits
+"__init__.py" = ["D104", "F401"]
+"shared-utils/functions.py" = ["F401"] # Don't flag unused imports in utility module

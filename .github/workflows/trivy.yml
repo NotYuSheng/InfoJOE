@@ -1,0 +1,69 @@
+name: trivy
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: '0 0 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Build & Scan Docker Images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Build Backend Image
+      - name: Build backend Docker image
+        run: |
+          docker build -t docker.io/notyusheng/query-agent-backend:${{ github.sha }} ./backend
+
+      # Scan Backend Image with Trivy
+      - name: Run Trivy on backend image
+        uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
+        with:
+          image-ref: 'docker.io/notyusheng/query-agent-backend:${{ github.sha }}'
+          format: 'template'
+          template: '@/contrib/sarif.tpl'
+          output: 'trivy-backend-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      # Upload Backend Scan Results
+      - name: Upload backend scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-backend-results.sarif'
+          category: 'trivy-backend'
+
+      # Build Frontend Image
+      - name: Build frontend Docker image
+        run: |
+          docker build -t docker.io/notyusheng/query-agent-frontend:${{ github.sha }} ./frontend
+
+      # Scan Frontend Image with Trivy
+      - name: Run Trivy on frontend image
+        uses: aquasecurity/trivy-action@7b7aa264d83dc58691451798b4d117d53d21edfe
+        with:
+          image-ref: 'docker.io/notyusheng/query-agent-frontend:${{ github.sha }}'
+          format: 'template'
+          template: '@/contrib/sarif.tpl'
+          output: 'trivy-frontend-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      # Upload Frontend Scan Results
+      - name: Upload frontend scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-frontend-results.sarif'
+          category: 'trivy-frontend'

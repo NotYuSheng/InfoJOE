@@ -30,8 +30,8 @@ This will:
 - **LLM-Generated Data Dictionary**:  
   Generates a clear, human-readable data dictionary for any selected table using Qwen 2.5.
 
-- **Sample Row Preview**:  
-  Instantly view the top 5 rows from any selected table.
+- **Diverse Data Sampling**:  
+  Previews a representative sample of rows to reflect different value distributions and data types, not just the top rows.
 
 - **Natural Language to SQL**:  
   Translate natural language queries into SQL commands using Qwen 2.5.

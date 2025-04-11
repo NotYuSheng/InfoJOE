@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -10,18 +10,14 @@ from sklearn.metrics import pairwise_distances
 import numpy as np
 import re
 import sys
-from typing import List, Dict, Any, Optional
-import math
-import datetime
-import decimal
+from typing import List, Dict, Any
 import traceback
-import os
 
 # Add the folder containing functions.py to the Python path
 sys.path.append("/app/shared_utils")
 
 # Import directly from the file
-from functions import clean_sample_data, make_json_safe
+from functions import clean_sample_data
 
 app = FastAPI(debug=True)
 
@@ -34,7 +30,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-LLM_URL = os.getenv("LLM_URL", "http://localhost:1234/v1/chat/completions")
+LLM_URL = "http://192.168.1.34:1234/v1/chat/completions"
 
 def get_diverse_sample(df: pd.DataFrame, n=10) -> pd.DataFrame:
     if len(df) <= n:
@@ -294,7 +290,6 @@ def run_sql(request: RunSQLRequest):
         cur.close()
         conn.close()
         return {"columns": columns, "rows": rows}
-
     except Exception as e:
         print("❌ SQL execution error:")
         print(traceback.format_exc())
@@ -320,8 +315,25 @@ def generate_sample_questions(req: GenerateSQLRequest):
     else:
         sample_section = "(No sample data provided)"
 
+    # prompt = f"""
+    # You are a helpful assistant that suggests example questions users might ask about the {req.table_name} table.
+
+    # ### Data Dictionary:
+    # {dict_section}
+
+    # ### Sample Data:
+    # {sample_section}
+
+    # Generate 3 example natural language questions that could be answered using a SQL SELECT query on the {req.table_name} table.
+    # Do not include any explanations—only the questions, each as a separate bullet point.
+    # """
+
     prompt = f"""
-    You are a helpful assistant that suggests example questions users might ask about the {req.table_name} table.
+    You are a helpful assistant supporting analysts in counter-terrorism intelligence gathering.
+
+    Given the structure and sample data of the `{req.table_name}` table, generate example investigative questions that an analyst might ask to uncover patterns, threats, or anomalies from the data.
+
+    Questions should be practical, focused, and answerable using a SQL SELECT query.
 
     ### Data Dictionary:
     {dict_section}
@@ -329,8 +341,9 @@ def generate_sample_questions(req: GenerateSQLRequest):
     ### Sample Data:
     {sample_section}
 
-    Generate 3 example natural language questions that could be answered using a SQL SELECT query on the {req.table_name} table.
+    Generate 3 example investigative questions that could be answered using a SQL SELECT query on the `{req.table_name}` table.
     Do not include any explanations—only the questions, each as a separate bullet point.
+    Do not ask questions related to date or time.
     """
 
     response = requests.post(LLM_URL, headers={"Content-Type": "application/json"}, json={

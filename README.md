@@ -21,15 +21,20 @@ This will:
 
 ## Features
 
-- **FastAPI Backend**:  
-  Hosted on <http://localhost:8000>  
-  Interactive API documentation available at <http://localhost:8000/docs > 
+- **Auto Table Discovery**:  
+   Automatically detects all tables in your connected PostgreSQL database.
 
-- **Streamlit Frontend**:  
-  Hosted on <http://localhost:8080>  
+- **Interactive Table Selection**:  
+   Easily select tables using a click-to-select interface.
 
-- **Live Reloading**:  
-  Hot reloading is enabled for both FastAPI and Streamlit during development.
+- **LLM-Generated Data Dictionary**:  
+  Generates a clear, human-readable data dictionary for any selected table using Qwen 2.5.
+
+- **Sample Row Preview**:  
+  Instantly view the top 5 rows from any selected table.
+
+- **Natural Language to SQL**:  
+  Translate natural language queries into SQL commands using Qwen 2.5.
 
 ---
 
@@ -54,11 +59,6 @@ Before you start, ensure the following tools are installed on your system:
 ---
 
 ## Development Workflow
-
-### Live Reloading
-
-Both FastAPI and Streamlit support hot reloading out of the box. Any changes you 
-make to the code will automatically reflect in the running containers.  
 
 ### Stopping the Application
 

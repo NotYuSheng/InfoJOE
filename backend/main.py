@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -10,17 +10,14 @@ from sklearn.metrics import pairwise_distances
 import numpy as np
 import re
 import sys
-from typing import List, Dict, Any, Optional
-import math
-import datetime
-import decimal
+from typing import List, Dict, Any
 import traceback
 
 # Add the folder containing functions.py to the Python path
 sys.path.append("/app/shared_utils")
 
 # Import directly from the file
-from functions import clean_sample_data, make_json_safe
+from functions import clean_sample_data
 
 app = FastAPI(debug=True)
 

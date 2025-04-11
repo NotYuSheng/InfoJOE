@@ -2,11 +2,6 @@ import streamlit as st
 import requests
 import pandas as pd
 import time
-
-# Add the folder containing functions.py to the Python path
-sys.path.append("/app/shared_utils")
-
-# Import directly from the file
 from functions import clean_sample_data, make_json_safe
 
 BACKEND_URL = "http://query-agent-backend:8000"

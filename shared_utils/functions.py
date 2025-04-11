@@ -2,7 +2,6 @@ import math
 import numpy as np
 import datetime
 import decimal
-import pandas as pd
 import logging
 
 logger = logging.getLogger("uvicorn.error")

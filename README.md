@@ -1,115 +1,102 @@
-# 🤖 Query Agent
+# InfoJOE
 
-**Query Agent** is an AI-powered natural language interface for PostgreSQL databases. It allows users to explore and query structured data using plain English, powered by [Qwen 2.5](https://huggingface.co/Qwen/Qwen1.5-72B-Chat) running via [LM Studio](https://lmstudio.ai/).
-
-Built with:
-- 🐍 FastAPI backend
-- 📈 Streamlit frontend
-- 🐘 PostgreSQL database
-- 🧠 LLM-powered SQL generation
-- 🐳 Docker & Docker Compose
+**InfoJOE** is an AI-powered natural language interface for PostgreSQL databases. It allows users to explore and query structured data using plain English, powered by [Qwen 2.5](https://huggingface.co/Qwen/Qwen1.5-72B-Chat) running via [LM Studio](https://lmstudio.ai/).
 
 ---
 
-## 🚀 Features
+## Getting Started
 
-- Auto-discovers tables in your PostgreSQL database
-- Click-to-select table interface
-- LLM-generated data dictionary for any table
-- Preview top 5 sample rows from selected table
-- Natural language-to-SQL translation using Qwen 2.5
-- Fully containerized setup for local development
+### Start the Application
+
+Run the following command to build and start the containers:  
+
+```docker-compose up```
+
+This will: 
+
+1. Build the Docker images for the FastAPI and Streamlit services.  
+2. Start the containers and serve the application.  
 
 ---
 
-## 🧱 Project Structure
+## Features
 
+- **FastAPI Backend**:  
+  Hosted on <http://localhost:3003>  
+  Interactive API documentation available at <http://localhost:3003/docs > 
+
+- **Streamlit Frontend**:  
+  Hosted on <http://localhost:8083>  
+
+- **Live Reloading**:  
+  Hot reloading is enabled for both FastAPI and Streamlit during development.
+
+---
+
+## Prerequisites
+
+Before you start, ensure the following tools are installed on your system:
+
+- Docker  
+- Docker Compose  
+
+---
+
+## Access the Application
+
+- **FastAPI Backend**:  
+  Visit <http://localhost:3003> to access the API.  
+  Documentation is available at <http://localhost:3003/docs>  
+
+- **Streamlit Frontend**:  
+  Visit <http://localhost:8083> to interact with the frontend.  
+
+---
+
+## Development Workflow
+
+### Live Reloading
+
+Both FastAPI and Streamlit support hot reloading out of the box. Any changes you 
+make to the code will automatically reflect in the running containers.  
+
+### Stopping the Application
+
+To stop the application, press `Ctrl+C` or run the following command:  
+
+docker-compose down  
+
+This will stop and remove the containers, but the built images will remain.  
+
+---
+
+## Directory Structure
+
+The project structure is as follows:  
+
+```shell
+.  
+├── backend/               # FastAPI application  
+│   ├── db.py              # 
+│   ├── main.py            # FastAPI entrypoint  
+│   ├── requirements.txt   # Python dependencies for FastAPI  
+│   └── Dockerfile         # Dockerfile for FastAPI  
+├── frontend/              # Streamlit application  
+│   ├── app.py             # Streamlit entrypoint  
+│   ├── Dockerfile         # Dockerfile for Streamlit
+│   └── requirements.txt   # Python dependencies for streamlit  
+├── postgres/              # 
+│   └── init.sql           #   
+├── shared-utils/          #   
+│   └── functions.py       # Streamlit entrypoint  
+├── docker-compose.yml     # Docker Compose configuration
+└── README.md              # Project documentation  
 ```
-query-agent/
-├── backend/            # FastAPI server
-│   ├── main.py
-│   ├── db.py
-│   ├── prompt.py
-│   └── requirements.txt
-├── frontend/           # Streamlit interface
-│   ├── streamlit_app.py
-│   └── requirements.txt
-├── postgres/           # Sample DB seed
-│   └── init.sql
-├── docker-compose.yml
-└── README.md
-```
 
 ---
 
-## 🛠️ Getting Started
+## Troubleshooting
 
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/notyusheng/query-agent.git
-cd query-agent
-```
-
-### 2. Start the app
-
-```bash
-docker-compose up --build -d
-```
-
-- Frontend (Streamlit): [http://localhost:8080](http://localhost:8080)
-- Backend (FastAPI): [http://localhost:3000/docs](http://localhost:3000/docs)
-- Database (PostgreSQL): Port `5432` exposed locally
-
----
-
-## 🧠 LLM Setup (Qwen 2.5 via LM Studio)
-
-Make sure LM Studio is running locally or on your network with the following:
-- Model: Qwen 2.5 (or any OpenAI-compatible LLM)
-- Server URL: `http://192.168.1.130:1234/v1/chat/completions`
-
-This is hardcoded in `backend/main.py`—update `LLM_URL` if needed.
-
----
-
-## 🧰 Example Table Included
-
-A sample `devices` table is loaded on first run via `postgres/init.sql`:
-
-```sql
-CREATE TABLE devices (
-    device_id SERIAL PRIMARY KEY,
-    model_name TEXT,
-    os_version TEXT,
-    release_year INTEGER
-);
-```
-
----
-
-## 📸 Screenshots
-
-_coming soon..._
-
----
-
-## 📌 To-Do / Ideas
-
-- [ ] Add support for multiple-table joins
-- [ ] Semantic search across column descriptions
-- [ ] Export SQL results as CSV
-- [ ] Admin interface to manage metadata
-
----
-
-## 📄 License
-
-MIT License — free for personal and commercial use.
-
----
-
-## 💬 Feedback / Contributions
-
-Open an issue, submit a PR, or reach out if you want to collaborate. This is an ongoing project and evolving rapidly.
-
+- Ensure Docker and Docker Compose are installed and running on your system.  
+- Verify that the required ports (3003 and 8083) are not in use by other 
+applications.  

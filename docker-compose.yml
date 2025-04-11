@@ -17,7 +17,7 @@ services:
     build: ./backend
     restart: unless-stopped
     ports:
-      - "3000:8000"
+      - "8000:8000"
     depends_on:
       - query-agent-db
     environment:

@@ -10,7 +10,7 @@
 
 Run the following command to build and start the containers:  
 
-```docker-compose up```
+```docker compose up -d```
 
 This will: 
 
@@ -22,11 +22,11 @@ This will:
 ## Features
 
 - **FastAPI Backend**:  
-  Hosted on <http://localhost:3003>  
-  Interactive API documentation available at <http://localhost:3003/docs > 
+  Hosted on <http://localhost:8000>  
+  Interactive API documentation available at <http://localhost:8000/docs > 
 
 - **Streamlit Frontend**:  
-  Hosted on <http://localhost:8083>  
+  Hosted on <http://localhost:8080>  
 
 - **Live Reloading**:  
   Hot reloading is enabled for both FastAPI and Streamlit during development.
@@ -45,11 +45,11 @@ Before you start, ensure the following tools are installed on your system:
 ## Access the Application
 
 - **FastAPI Backend**:  
-  Visit <http://localhost:3003> to access the API.  
-  Documentation is available at <http://localhost:3003/docs>  
+  Visit <http://localhost:8000> to access the API.  
+  Documentation is available at <http://localhost:8000/docs>  
 
 - **Streamlit Frontend**:  
-  Visit <http://localhost:8083> to interact with the frontend.  
+  Visit <http://localhost:8080> to interact with the frontend.  
 
 ---
 
@@ -98,7 +98,7 @@ The project structure is as follows:
 ## Troubleshooting
 
 - Ensure Docker and Docker Compose are installed and running on your system.  
-- Verify that the required ports (3003 and 8083) are not in use by other 
+- Verify that the required ports (8000 and 8080) are not in use by other 
 applications.  
 
 ---

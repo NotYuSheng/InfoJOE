@@ -315,25 +315,8 @@ def generate_sample_questions(req: GenerateSQLRequest):
     else:
         sample_section = "(No sample data provided)"
 
-    # prompt = f"""
-    # You are a helpful assistant that suggests example questions users might ask about the {req.table_name} table.
-
-    # ### Data Dictionary:
-    # {dict_section}
-
-    # ### Sample Data:
-    # {sample_section}
-
-    # Generate 3 example natural language questions that could be answered using a SQL SELECT query on the {req.table_name} table.
-    # Do not include any explanations—only the questions, each as a separate bullet point.
-    # """
-
     prompt = f"""
-    You are a helpful assistant supporting analysts in counter-terrorism intelligence gathering.
-
-    Given the structure and sample data of the `{req.table_name}` table, generate example investigative questions that an analyst might ask to uncover patterns, threats, or anomalies from the data.
-
-    Questions should be practical, focused, and answerable using a SQL SELECT query.
+    You are a helpful assistant that suggests example questions users might ask about the {req.table_name} table.
 
     ### Data Dictionary:
     {dict_section}
@@ -341,9 +324,8 @@ def generate_sample_questions(req: GenerateSQLRequest):
     ### Sample Data:
     {sample_section}
 
-    Generate 3 example investigative questions that could be answered using a SQL SELECT query on the `{req.table_name}` table.
+    Generate 3 example natural language questions that could be answered using a SQL SELECT query on the {req.table_name} table.
     Do not include any explanations—only the questions, each as a separate bullet point.
-    Do not ask questions related to date or time.
     """
 
     response = requests.post(LLM_URL, headers={"Content-Type": "application/json"}, json={

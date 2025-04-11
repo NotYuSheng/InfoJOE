@@ -1,20 +1,13 @@
 import streamlit as st
 import requests
 import pandas as pd
-import io
-import os
-import math
-import sys
-import numpy as np
-import datetime
-import decimal
 import time
 from functions import clean_sample_data, make_json_safe
 
 BACKEND_URL = "http://query-agent-backend:8000"
 
-st.set_page_config(page_title="Query Agent", layout="centered")
-st.title("🧠 Query Agent")
+st.set_page_config(page_title="InfoJoe", layout="centered")
+st.title("🧠 InfoJOE")
 st.caption("Ask questions in plain English and generate SQL queries using AI. Upload your data or connect to a database to get started.")
 
 user_df = None

@@ -77,7 +77,7 @@ The project structure is as follows:
 ```shell
 .  
 ├── backend/               # FastAPI application  
-│   ├── db.py              # 
+│   ├── db.py              # Handles database connection and queries (e.g., to PostgreSQL or SQLite)
 │   ├── main.py            # FastAPI entrypoint  
 │   ├── requirements.txt   # Python dependencies for FastAPI  
 │   └── Dockerfile         # Dockerfile for FastAPI  
@@ -85,9 +85,9 @@ The project structure is as follows:
 │   ├── app.py             # Streamlit entrypoint  
 │   ├── Dockerfile         # Dockerfile for Streamlit
 │   └── requirements.txt   # Python dependencies for streamlit  
-├── postgres/              # 
-│   └── init.sql           #   
-├── shared-utils/          #   
+├── postgres/              # PostgreSQL setup folder
+│   └── init.sql           # SQL script to initialize the database (e.g., table creation, seed data)
+├── shared_utils/          # Shared Python utilities used by both frontend and backend
 │   └── functions.py       # Streamlit entrypoint  
 ├── docker-compose.yml     # Docker Compose configuration
 └── README.md              # Project documentation  
@@ -100,3 +100,9 @@ The project structure is as follows:
 - Ensure Docker and Docker Compose are installed and running on your system.  
 - Verify that the required ports (3003 and 8083) are not in use by other 
 applications.  
+
+---
+
+## License
+
+This project is licensed under the MIT License. See the LICENSE file for details.

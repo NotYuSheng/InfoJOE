@@ -2,6 +2,14 @@
 
 **InfoJOE** is an AI-powered natural language interface for PostgreSQL databases. It allows users to explore and query structured data using plain English, powered by [Qwen 2.5](https://huggingface.co/Qwen/Qwen1.5-72B-Chat) running via [LM Studio](https://lmstudio.ai/).
 
+<details>
+  <summary>Full Page Sample</summary>
+  <br>
+  <div align="center">
+    <img src="sample-files/Full-DEMO.png" alt="Full demo img" style="width: 75%; max-width: 50px; height: auto;" />
+  </div>
+</details>
+
 ---
 
 ## Getting Started

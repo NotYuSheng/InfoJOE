@@ -12,6 +12,7 @@ import re
 import sys
 from typing import List, Dict, Any
 import traceback
+import os
 from shared_utils.functions import clean_sample_data, make_json_safe
 
 app = FastAPI(debug=True)
@@ -25,7 +26,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-LLM_URL = "http://192.168.1.34:1234/v1/chat/completions"
+LLM_URL = os.getenv("LLM_URL", "http://localhost:1234/v1/chat/completions")
 
 def get_diverse_sample(df: pd.DataFrame, n=10) -> pd.DataFrame:
     if len(df) <= n:

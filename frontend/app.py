@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import time
-from functions import clean_sample_data, make_json_safe
+from shared_utils.functions import clean_sample_data, make_json_safe
 
 BACKEND_URL = "http://query-agent-backend:8000"
 

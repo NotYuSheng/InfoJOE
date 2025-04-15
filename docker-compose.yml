@@ -27,6 +27,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
       POSTGRES_HOST: query-agent-db
+      LLM_URL: http://192.168.1.74:1234/v1/chat/completions # CHANGE THIS TO YOUR LM API URL
     volumes:
       - ./shared_utils:/app/shared_utils
     networks:

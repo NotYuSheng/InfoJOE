@@ -11,6 +11,8 @@ services:
       - "5432:5432"
     volumes:
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - shared-network
 
   query-agent-backend:
     container_name: query-agent-backend

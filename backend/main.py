@@ -12,12 +12,7 @@ import re
 import sys
 from typing import List, Dict, Any
 import traceback
-
-# Add the folder containing functions.py to the Python path
-sys.path.append("/app/shared_utils")
-
-# Import directly from the file
-from functions import clean_sample_data
+from shared_utils.functions import clean_sample_data, make_json_safe
 
 app = FastAPI(debug=True)
 
